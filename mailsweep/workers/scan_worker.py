@@ -19,8 +19,9 @@ logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 500
 
-# IMAP fetch items
-FETCH_ITEMS = [b"ENVELOPE", b"RFC822.SIZE", b"BODYSTRUCTURE", b"FLAGS", b"X-GM-THRID"]
+# IMAP fetch items — X-GM-THRID is Gmail-only; only requested when server advertises X-GM-EXT-1
+_FETCH_ITEMS_BASE = [b"ENVELOPE", b"RFC822.SIZE", b"BODYSTRUCTURE", b"FLAGS"]
+_FETCH_ITEMS_GMAIL = _FETCH_ITEMS_BASE + [b"X-GM-THRID"]
 
 
 class ScanWorker:
@@ -55,6 +56,9 @@ class ScanWorker:
         Otherwise fetch all non-deleted UIDs (full scan).
         Returns fetched Message objects.  Raises on connection error.
         """
+        caps = self._client.capabilities()
+        fetch_items = _FETCH_ITEMS_GMAIL if b"X-GM-EXT-1" in caps else _FETCH_ITEMS_BASE
+
         self._client.select_folder(self._folder_name, readonly=True)
         if uids is not None:
             all_uids = uids
@@ -73,7 +77,7 @@ class ScanWorker:
 
             batch_uids = all_uids[batch_start: batch_start + BATCH_SIZE]
             try:
-                fetch_data = self._client.fetch(batch_uids, FETCH_ITEMS)
+                fetch_data = self._client.fetch(batch_uids, fetch_items)
             except Exception as exc:
                 logger.error("FETCH failed for %s batch %d: %s", self._folder_name, batch_start, exc)
                 raise
