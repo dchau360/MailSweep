@@ -183,6 +183,7 @@ class MainWindow(QMainWindow):
         self._msg_table.delete_requested.connect(self._on_delete_messages)
         self._msg_table.move_requested.connect(self._on_move_messages)
         self._msg_table.remove_label_requested.connect(self._on_remove_label)
+        self._msg_table.unsubscribe_requested.connect(self._on_unsubscribe_messages)
         self._msg_table.view_headers_requested.connect(self._on_view_headers)
         self._msg_table.show_to_toggled.connect(self._on_show_to_toggled)
         v_splitter.addWidget(self._msg_table)
@@ -1166,6 +1167,55 @@ class MainWindow(QMainWindow):
             folder_id_to_name=folder_map,
         )
         self._run_worker(worker, f"Removing {len(to_remove)} label(s)…", updates_cache=True)
+
+    # ── Unsubscribe ───────────────────────────────────────────────────────────
+
+    def _on_unsubscribe_messages(self, messages: list[Message]) -> None:
+        if not messages:
+            QMessageBox.information(self, "No Selection", "Select messages first.")
+            return
+        if not self._current_account:
+            return
+
+        senders = sorted({msg.from_addr for msg in messages})
+        sender_list = "\n".join(f"  \u2022 {s}" for s in senders[:20])
+        if len(senders) > 20:
+            sender_list += f"\n  \u2026and {len(senders) - 20} more"
+
+        reply = QMessageBox.question(
+            self, "Unsubscribe",
+            f"Unsubscribe from {len(senders)} sender(s)?\n\n{sender_list}\n\n"
+            "One-click requests will be sent silently.\n"
+            "Other links will open in a sandboxed in-app browser.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._unsub_webview_queue: list[tuple[str, str]] = []
+        folder_map = self._build_folder_name_map()
+        from mailsweep.workers.unsubscribe_worker import UnsubscribeWorker
+
+        worker = UnsubscribeWorker(
+            account=self._current_account,
+            messages=messages,
+            folder_id_to_name=folder_map,
+        )
+        worker.need_webview.connect(
+            lambda url, sender: self._unsub_webview_queue.append((url, sender))
+        )
+        worker.finished.connect(self._on_unsub_finished)
+        self._run_worker(worker, f"Unsubscribing from {len(messages)} message(s)…")
+
+    def _on_unsub_finished(self) -> None:
+        queue = getattr(self, "_unsub_webview_queue", [])
+        self._unsub_webview_queue = []
+        if not queue:
+            return
+        from mailsweep.ui.unsubscribe_dialog import UnsubscribeDialog
+        for url, sender in queue:
+            dlg = UnsubscribeDialog(url, sender, self)
+            dlg.exec()
 
     def _run_worker(
         self, worker, status_msg: str, *,
