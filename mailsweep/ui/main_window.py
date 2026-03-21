@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
         self._scan_worker: QtScanWorker | None = None
         self._op_thread: QThread | None = None
         self._op_worker: object | None = None
+        self._op_queue: list[tuple] = []  # (worker, status_msg, needs_rescan, updates_cache)
         self._move_thread: QThread | None = None
         self._move_worker: object | None = None
         self._op_processed: dict[int, list[int]] = {}  # folder_id → [uids]
@@ -1278,7 +1279,24 @@ class MainWindow(QMainWindow):
         self, worker, status_msg: str, *,
         needs_rescan: bool = False, updates_cache: bool = False,
     ) -> None:
-        """Wire a generic QObject worker to a QThread and start it."""
+        """Queue a worker; starts immediately if no operation is running."""
+        if self._op_thread is not None:
+            self._op_queue.append((worker, status_msg, needs_rescan, updates_cache))
+            queued = len(self._op_queue)
+            logger.info("Worker queued (%d in queue): %s", queued, status_msg)
+            self._progress_panel.set_running(
+                self._progress_panel._status_label.text() + f"  [{queued} queued]"
+                if hasattr(self._progress_panel, "_status_label") else
+                f"[{queued} operation(s) queued]"
+            )
+            return
+        self._start_worker(worker, status_msg, needs_rescan, updates_cache)
+
+    def _start_worker(
+        self, worker, status_msg: str,
+        needs_rescan: bool = False, updates_cache: bool = False,
+    ) -> None:
+        """Wire a worker to a QThread and start it immediately."""
         self._op_processed = {}
         self._op_needs_rescan = needs_rescan
         self._op_updates_cache = updates_cache
@@ -1302,13 +1320,15 @@ class MainWindow(QMainWindow):
         if hasattr(worker, "finished"):
             worker.finished.connect(self._on_op_finished)
 
-        # Keep references to prevent garbage collection before thread runs
+        # Keep references to prevent garbage collection before thread runs.
+        # _cleanup captures `thread` so it only clears refs if no new job has started.
         self._op_worker = worker
         self._op_thread = thread
 
-        def _cleanup():
-            self._op_worker = None
-            self._op_thread = None
+        def _cleanup(_t=thread):
+            if self._op_thread is _t:
+                self._op_worker = None
+                self._op_thread = None
         thread.finished.connect(_cleanup)
 
         self._progress_panel.set_running(status_msg)
@@ -1322,7 +1342,6 @@ class MainWindow(QMainWindow):
     def _on_op_finished(self) -> None:
         if self._is_closing:
             return
-        self._progress_panel.set_done("Operation complete")
 
         # Remove processed UIDs from cache and recompute folder stats
         affected_folder_ids = list(self._op_processed.keys())
@@ -1332,7 +1351,16 @@ class MainWindow(QMainWindow):
                 self._folder_repo.update_stats(folder_id)
         self._op_processed = {}
 
-        if self._op_needs_rescan and affected_folder_ids:
+        needs_rescan = self._op_needs_rescan
+
+        # Start the next queued operation before refreshing the UI
+        if self._op_queue:
+            next_worker, next_msg, next_rescan, next_cache = self._op_queue.pop(0)
+            self._start_worker(next_worker, next_msg, next_rescan, next_cache)
+        else:
+            self._progress_panel.set_done("Operation complete")
+
+        if needs_rescan and affected_folder_ids:
             # Detach APPENDs replacement messages — rescan to pick up new UIDs
             folders = [
                 f for fid in affected_folder_ids
