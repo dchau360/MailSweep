@@ -225,6 +225,7 @@ class MessageTableView(QTableView):
     delete_requested = pyqtSignal(list)     # list[Message]
     move_requested = pyqtSignal(list)       # list[Message]
     remove_label_requested = pyqtSignal(list)  # list[Message]
+    unsubscribe_requested = pyqtSignal(list)    # list[Message]
     view_headers_requested = pyqtSignal(object)  # Message
     show_to_toggled = pyqtSignal(bool)      # emitted on manual header toggle
 
@@ -311,6 +312,8 @@ class MessageTableView(QTableView):
         move_act = menu.addAction(f"Move to… ({n} msg(s))")
         remove_label_act = menu.addAction(f"Remove Label ({n} msg(s))")
         menu.addSeparator()
+        unsub_act = menu.addAction(f"Unsubscribe ({n} msg(s))")
+        menu.addSeparator()
         headers_act = menu.addAction("View Headers…")
 
         extract_act.triggered.connect(lambda: self.extract_requested.emit(selected))
@@ -320,6 +323,7 @@ class MessageTableView(QTableView):
         delete_act.triggered.connect(lambda: self.delete_requested.emit(selected))
         move_act.triggered.connect(lambda: self.move_requested.emit(selected))
         remove_label_act.triggered.connect(lambda: self.remove_label_requested.emit(selected))
+        unsub_act.triggered.connect(lambda: self.unsubscribe_requested.emit(selected))
         headers_act.triggered.connect(
             lambda: self.view_headers_requested.emit(selected[0]) if selected else None
         )
