@@ -53,6 +53,42 @@ _OUTLOOK_HELP = """\
 3. Add a Mobile/Desktop redirect URI: <code>https://login.microsoftonline.com/common/oauth2/nativeclient</code><br>
 4. Copy the Application (client) ID below."""
 
+_YAHOO_HELP = """\
+<b>Yahoo requires an App Password</b> (not your normal Yahoo password).<br><br>
+1. Go to <a href="https://login.yahoo.com/account/security">Yahoo Account Security</a><br>
+2. Under <i>App passwords</i>, generate one for "Other App"<br>
+3. Paste the generated password above."""
+
+_PROTONMAIL_HELP = """\
+<b>ProtonMail requires the <a href="https://proton.me/mail/bridge">Proton Mail Bridge</a> app.</b><br><br>
+1. Install and run Proton Mail Bridge on this machine<br>
+2. Copy the <i>Bridge password</i> from the Bridge app and paste it above.<br>
+3. The host <code>127.0.0.1</code> and port <code>1143</code> are set automatically."""
+
+_FASTMAIL_HELP = """\
+<b>Fastmail requires an App Password.</b><br><br>
+1. Go to <a href="https://app.fastmail.com/settings/security/devicekeys">Fastmail Settings → Passwords &amp; Security</a><br>
+2. Under <i>Third-party apps</i>, add a new App Password with IMAP access<br>
+3. Paste the generated password above."""
+
+# Provider profiles: (display_name, host, port, use_ssl, auth_type, help_text)
+_PROVIDERS = [
+    ("Gmail",       "imap.gmail.com",           993,  True,  AuthType.PASSWORD,       _GMAIL_APP_PASSWORD_HELP),
+    ("Outlook",     "outlook.office365.com",     993,  True,  AuthType.PASSWORD,       None),
+    ("Yahoo",       "imap.mail.yahoo.com",       993,  True,  AuthType.PASSWORD,       _YAHOO_HELP),
+    ("ProtonMail",  "127.0.0.1",                 1143, False, AuthType.PASSWORD,       _PROTONMAIL_HELP),
+    ("Fastmail",    "imap.fastmail.com",         993,  True,  AuthType.PASSWORD,       _FASTMAIL_HELP),
+    ("Custom",      "",                          993,  True,  AuthType.PASSWORD,       None),
+]
+
+def _detect_provider(host: str) -> int:
+    """Return index into _PROVIDERS matching host, or last (Custom) if no match."""
+    h = host.lower()
+    for i, (_, ph, *_rest) in enumerate(_PROVIDERS[:-1]):
+        if ph and ph in h:
+            return i
+    return len(_PROVIDERS) - 1
+
 
 class _OAuthWorker(QObject):
     """Runs the blocking OAuth browser flow on a background thread."""
@@ -107,6 +143,12 @@ class AccountDialog(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         form = QFormLayout()
+
+        self._provider = QComboBox()
+        for name, *_ in _PROVIDERS:
+            self._provider.addItem(name)
+        self._provider.currentIndexChanged.connect(self._on_provider_changed)
+        form.addRow("Provider:", self._provider)
 
         self._display_name = QLineEdit()
         self._display_name.setPlaceholderText("Work Gmail")
@@ -191,6 +233,11 @@ class AccountDialog(QDialog):
         layout.addWidget(buttons)
 
     def _populate(self, account: Account) -> None:
+        # Select provider before filling fields so _on_provider_changed doesn't overwrite them
+        self._provider.blockSignals(True)
+        self._provider.setCurrentIndex(_detect_provider(account.host))
+        self._provider.blockSignals(False)
+
         self._display_name.setText(account.display_name)
         self._host.setText(account.host)
         self._port.setValue(account.port)
@@ -199,6 +246,31 @@ class AccountDialog(QDialog):
         if idx >= 0:
             self._auth_type.setCurrentIndex(idx)
         self._use_ssl.setChecked(account.use_ssl)
+
+    def _on_provider_changed(self, index: int) -> None:
+        _, host, port, use_ssl, auth_type, help_text = _PROVIDERS[index]
+        is_custom = (index == len(_PROVIDERS) - 1)
+
+        # Fill fields for known providers; leave editable for Custom
+        if not is_custom:
+            self._host.setText(host)
+            self._port.setValue(port)
+            self._use_ssl.setChecked(use_ssl)
+            auth_idx = self._auth_type.findData(auth_type)
+            if auth_idx >= 0:
+                self._auth_type.setCurrentIndex(auth_idx)
+
+        # Show provider-specific help if any
+        if help_text and not (self._auth_type.currentData() in (AuthType.OAUTH2_GMAIL, AuthType.OAUTH2_OUTLOOK)):
+            self._help_label.setText(help_text)
+            self._help_label.setVisible(True)
+        else:
+            self._on_auth_type_changed()  # let auth type handler decide
+
+        # Lock host/port for known providers, allow editing for Custom
+        self._host.setReadOnly(not is_custom)
+        self._port.setReadOnly(not is_custom)
+        self.adjustSize()
 
     def _is_gmail_host(self) -> bool:
         host = self._host.text().strip()
@@ -231,14 +303,6 @@ class AccountDialog(QDialog):
         self._authorize_label.setVisible(is_oauth)
         self._authorize_btn.setVisible(is_oauth)
         self._authorize_status.setVisible(is_oauth)
-
-        # Auto-fill host for known providers
-        if is_gmail and not self._host.text():
-            self._host.setText("imap.gmail.com")
-            self._port.setValue(993)
-        elif is_outlook and not self._host.text():
-            self._host.setText("outlook.office365.com")
-            self._port.setValue(993)
 
         self.adjustSize()
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -11,13 +12,20 @@ from mailsweep.models.message import Message
 
 logger = logging.getLogger(__name__)
 
+# Yahoo Mail rate-limits UID COPY — use small chunks with a delay between them.
+# Flag+expunge are lighter and can be sent in one call for all UIDs.
+_COPY_BATCH_SIZE = 15
+_COPY_BATCH_DELAY = 1.0   # seconds between COPY chunks
+_COPY_RETRY_DELAY = 5.0   # seconds to wait before retrying after a rate-limit error
+_COPY_MAX_RETRIES = 3
+
 
 class DeleteWorker(QObject):
     """
-    For each selected message:
-      1. COPY to Trash folder (Gmail-safe)
-      2. STORE uid +FLAGS \\Deleted
-      3. UID EXPUNGE (falls back to flagged-only if UIDPLUS unavailable)
+    Per folder:
+      1. COPY UIDs to Trash in batches of _COPY_BATCH_SIZE (avoids server rate limits)
+      2. STORE all UIDs +FLAGS \\Deleted in one call
+      3. UID EXPUNGE all UIDs in one call (falls back to EXPUNGE if UIDPLUS unavailable)
     """
 
     progress = pyqtSignal(int, int, str)  # done, total, status_msg
@@ -72,32 +80,55 @@ class DeleteWorker(QObject):
                     done += len(folder_msgs)
                     continue
 
-                for msg in folder_msgs:
+                uids = [msg.uid for msg in folder_msgs]
+                n = len(uids)
+                self.progress.emit(done, total, f"Deleting {n} messages from {folder_name}…")
+
+                try:
+                    # COPY to Trash in small chunks with delay to avoid rate limits
+                    if trash_folder and folder_name != trash_folder:
+                        for i in range(0, n, _COPY_BATCH_SIZE):
+                            if self._cancel_requested:
+                                break
+                            chunk = uids[i:i + _COPY_BATCH_SIZE]
+                            for attempt in range(_COPY_MAX_RETRIES):
+                                try:
+                                    client.copy(chunk, trash_folder)
+                                    break
+                                except Exception as exc:
+                                    if "rate limit" in str(exc).lower() and attempt < _COPY_MAX_RETRIES - 1:
+                                        logger.warning("COPY rate limit hit, retrying in %.0fs…", _COPY_RETRY_DELAY)
+                                        self.progress.emit(done, total, f"Rate limited — waiting {int(_COPY_RETRY_DELAY)}s…")
+                                        time.sleep(_COPY_RETRY_DELAY)
+                                    else:
+                                        raise
+                            copied = min(i + _COPY_BATCH_SIZE, n)
+                            self.progress.emit(done, total, f"{copied}/{n} to Trash…")
+                            logger.info("Copied UIDs %d-%d from %s to %s", i, copied, folder_name, trash_folder)
+                            if i + _COPY_BATCH_SIZE < n:
+                                time.sleep(_COPY_BATCH_DELAY)
+
                     if self._cancel_requested:
-                        break
+                        done += n
+                        continue
 
-                    self.progress.emit(done, total, f"Deleting {msg.subject[:40]}…")
+                    # Flag and expunge all at once — these are cheap operations
+                    client.set_flags(uids, [b"\\Deleted"])
                     try:
-                        if trash_folder and folder_name != trash_folder:
-                            client.copy([msg.uid], trash_folder)
-                            logger.info("Copied UID %d from %s to %s", msg.uid, folder_name, trash_folder)
+                        client.uid_expunge(uids)
+                    except Exception:
+                        logger.warning("UID EXPUNGE unavailable for %s, falling back to EXPUNGE", folder_name)
+                        client.expunge()
 
-                        client.set_flags([msg.uid], [b"\\Deleted"])
-                        try:
-                            client.uid_expunge([msg.uid])
-                        except Exception:
-                            logger.warning(
-                                "UID EXPUNGE not supported for UID %d in %s, message flagged but not expunged",
-                                msg.uid, folder_name,
-                            )
-
+                    for msg in folder_msgs:
                         self.message_done.emit(msg, "deleted")
-                    except Exception as exc:
-                        logger.error("Delete failed for UID %d: %s", msg.uid, exc)
-                        self.error.emit(f"Failed to delete UID {msg.uid}: {exc}")
-
-                    done += 1
+                    done += n
                     self.progress.emit(done, total, f"Deleted {done}/{total}")
+
+                except Exception as exc:
+                    logger.error("Batch delete failed for %s: %s", folder_name, exc)
+                    self.error.emit(f"Failed to delete messages in {folder_name}: {exc}")
+                    done += n
 
         finally:
             try:

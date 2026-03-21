@@ -16,6 +16,7 @@ dependencies = [
     "keyring>=24.3.0",
     "chardet>=5.2.0",
     "certifi>=2024.0.0",
+    "pyqt6-webengine>=6.10.0",
 ]
 
 [project.urls]
