@@ -62,6 +62,7 @@ class UnsubscribeWorker(QObject):
 
         total = len(self._messages)
         done = 0
+        seen_urls: set[str] = set()  # deduplicate across all folders
 
         by_folder: dict[int, list[Message]] = defaultdict(list)
         for msg in self._messages:
@@ -92,6 +93,7 @@ class UnsubscribeWorker(QObject):
                         done += 1
                     continue
 
+                # seen_urls is shared across folders — one request per unique URL total.
                 for uid, data in fetch_data.items():
                     msg = uid_to_msg.get(uid)
                     if not msg:
@@ -109,10 +111,14 @@ class UnsubscribeWorker(QObject):
 
                     if not unsub_url:
                         self.message_done.emit(msg, "no_header")
+                    elif unsub_url in seen_urls:
+                        self.message_done.emit(msg, "duplicate_skipped")
                     elif is_one_click:
+                        seen_urls.add(unsub_url)
                         status = _do_one_click_post(unsub_url)
                         self.message_done.emit(msg, status)
                     else:
+                        seen_urls.add(unsub_url)
                         self.need_webview.emit(unsub_url, msg.from_addr)
                         self.message_done.emit(msg, "needs_browser")
 
