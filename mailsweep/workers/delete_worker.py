@@ -103,7 +103,8 @@ class DeleteWorker(QObject):
                                     else:
                                         raise
                             copied = min(i + _COPY_BATCH_SIZE, n)
-                            self.progress.emit(done, total, f"{copied}/{n} to Trash…")
+                            sender = folder_msgs[i].from_addr[:50]
+                            self.progress.emit(done, total, f"{copied}/{n} to Trash — {sender}…")
                             logger.info("Copied UIDs %d-%d from %s to %s", i, copied, folder_name, trash_folder)
                             if i + _COPY_BATCH_SIZE < n:
                                 time.sleep(_COPY_BATCH_DELAY)
