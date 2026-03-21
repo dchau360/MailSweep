@@ -42,6 +42,11 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **OAuth2 support** — Gmail (XOAUTH2) and Outlook (MSAL), plus password/app-password auth
 - **Filter bar** — filter by sender, subject, date range, size range, attachment presence
 - **AI assistant** — LLM-powered mailbox analysis (Ollama, LM Studio, OpenAI, Anthropic) with dynamic model dropdowns and Refresh to discover local models; find misfilings, dead folders, sender overlap; apply AI-suggested IMAP moves with one click
+- **Bulk unsubscribe** — right-click selected messages to unsubscribe from mailing lists; supports RFC 8058 one-click unsubscribe (silent POST) and sandboxed browser for manual confirmation pages
+- **Unsubscribe & Delete** — unsubscribe and move to Trash in one action; deduplicates requests so each unique unsubscribe URL is only called once even when multiple messages from the same sender are selected
+- **Select-all checkbox** — checkbox in the message table header selects or deselects all visible messages; shows tri-state (partial) indicator when only some rows are checked
+- **Fast batch delete** — bulk delete sends messages to Trash in optimised batches with automatic rate-limit retry; significantly faster than deleting one message at a time
+- **Provider profiles** — Add Account dialog includes preset profiles for Gmail, Outlook, Yahoo, ProtonMail, and Fastmail that auto-fill host, port, SSL, and auth type
 
 ## Installation
 
@@ -212,6 +217,34 @@ originals so you can delete them and actually reclaim the storage.
 
 ---
 
+### Bulk Unsubscribe
+
+**Right-click → Unsubscribe (N msg(s))** or **Unsubscribe && Delete (N msg(s))**
+
+Select one or more messages in the message table, then right-click to unsubscribe from their
+mailing lists. MailSweep reads the `List-Unsubscribe` and `List-Unsubscribe-Post` headers from
+each message and handles the unsubscribe automatically:
+
+| Header present | What MailSweep does |
+|---------------|---------------------|
+| `List-Unsubscribe-Post: List-Unsubscribe=One-Click` + HTTPS URL | Silent HTTP POST per RFC 8058 — no browser needed |
+| HTTPS URL only (no one-click header) | Opens a sandboxed browser tab for you to complete the form |
+| Mailto only | Skipped (no SMTP support) |
+| No unsubscribe header | Skipped |
+
+**Deduplication:** If you select 50 messages from the same newsletter, MailSweep sends the
+unsubscribe request exactly once — subsequent messages with the same URL are marked
+`duplicate_skipped` without making a second request.
+
+**Sandboxed browser:** When a manual confirmation page is required, MailSweep opens it in an
+isolated, off-the-record browser view. Cross-origin navigation is blocked, JavaScript window
+popups are disabled, and nothing is saved to your browser profile.
+
+**Unsubscribe && Delete:** Runs the unsubscribe step first, then moves all selected messages to
+Trash in one batched operation — useful for cleaning up a mailing list in one action.
+
+---
+
 ### AI Assistant
 
 **View → Show AI Assistant**
@@ -276,6 +309,8 @@ treemaps, and duplicate searches since every message appears at least twice.
 | **Backup** | No | Download full message as .eml file |
 | **Backup & Delete** | Yes | Download .eml then move message to Trash |
 | **Delete** | Yes | Move message to Trash (Gmail-safe) |
+| **Unsubscribe** | No | Send unsubscribe request for selected mailing lists |
+| **Unsubscribe & Delete** | Yes | Unsubscribe then move messages to Trash |
 | **AI Move** | Yes | LLM suggests moves → user confirms → messages moved via IMAP |
 
 ### Extract vs Detach
