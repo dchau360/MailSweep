@@ -4,6 +4,8 @@ from __future__ import annotations
 from PyQt6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
+    QPoint,
+    QRect,
     QSortFilterProxyModel,
     Qt,
     pyqtSignal,
@@ -11,8 +13,11 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QAction, QColor, QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QHeaderView,
     QMenu,
+    QStyle,
+    QStyleOptionButton,
     QTableView,
     QWidget,
 )
@@ -213,6 +218,58 @@ class MessageTableModel(QAbstractTableModel):
         return ""
 
 
+class _CheckboxHeader(QHeaderView):
+    """Horizontal header that draws a select-all checkbox in section 0."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self._check_state = Qt.CheckState.Unchecked
+        self.setSectionsClickable(True)
+
+    def set_check_state(self, state: Qt.CheckState) -> None:
+        if state != self._check_state:
+            self._check_state = state
+            self.viewport().update()
+
+    def paintSection(self, painter, rect: QRect, logical_index: int) -> None:
+        if logical_index != COL_CHECK:
+            super().paintSection(painter, rect, logical_index)
+            return
+
+        painter.save()
+        super().paintSection(painter, rect, logical_index)
+
+        size = 14
+        opt = QStyleOptionButton()
+        opt.rect = QRect(
+            rect.x() + (rect.width() - size) // 2,
+            rect.y() + (rect.height() - size) // 2,
+            size, size,
+        )
+        opt.state = QStyle.StateFlag.State_Enabled
+        if self._check_state == Qt.CheckState.Checked:
+            opt.state |= QStyle.StateFlag.State_On
+        elif self._check_state == Qt.CheckState.PartiallyChecked:
+            opt.state |= QStyle.StateFlag.State_NoChange
+        else:
+            opt.state |= QStyle.StateFlag.State_Off
+        QApplication.style().drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorCheckBox, opt, painter)
+        painter.restore()
+
+    def mousePressEvent(self, event) -> None:
+        logical = self.logicalIndexAt(event.pos())
+        if logical == COL_CHECK:
+            # Toggle: if all checked → uncheck all, otherwise check all
+            table_view = self.parent()
+            if isinstance(table_view, MessageTableView):
+                if self._check_state == Qt.CheckState.Checked:
+                    table_view.source_model.check_none()
+                else:
+                    table_view.source_model.check_all()
+            return
+        super().mousePressEvent(event)
+
+
 class MessageTableView(QTableView):
     """
     Configured QTableView with context menu actions for bulk operations.
@@ -225,6 +282,7 @@ class MessageTableView(QTableView):
     delete_requested = pyqtSignal(list)     # list[Message]
     move_requested = pyqtSignal(list)       # list[Message]
     remove_label_requested = pyqtSignal(list)  # list[Message]
+    unsubscribe_requested = pyqtSignal(list)    # list[Message]
     view_headers_requested = pyqtSignal(object)  # Message
     show_to_toggled = pyqtSignal(bool)      # emitted on manual header toggle
 
@@ -235,7 +293,13 @@ class MessageTableView(QTableView):
         self._proxy.setSourceModel(self._model)
         self._proxy.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._proxy.setSortRole(Qt.ItemDataRole.UserRole + 1)
+
+        self._checkbox_header = _CheckboxHeader(self)
+        self.setHorizontalHeader(self._checkbox_header)
         self.setModel(self._proxy)
+
+        self._model.dataChanged.connect(self._sync_header_check_state)
+        self._model.modelReset.connect(self._sync_header_check_state)
 
         self._configure_view()
         self._build_context_menu()
@@ -267,13 +331,24 @@ class MessageTableView(QTableView):
         hh.resizeSection(COL_ROLE, 110)
         self.setColumnHidden(COL_ROLE, True)
 
+    def _sync_header_check_state(self) -> None:
+        n = len(self._model.messages)
+        checked = len(self._model._checked)
+        if n == 0 or checked == 0:
+            state = Qt.CheckState.Unchecked
+        elif checked == n:
+            state = Qt.CheckState.Checked
+        else:
+            state = Qt.CheckState.PartiallyChecked
+        self._checkbox_header.set_check_state(state)
+
     def _build_header_context_menu(self) -> None:
-        hh = self.horizontalHeader()
+        hh = self._checkbox_header
         hh.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         hh.customContextMenuRequested.connect(self._show_header_context_menu)
 
     def _show_header_context_menu(self, pos) -> None:
-        col = self.horizontalHeader().logicalIndexAt(pos)
+        col = self._checkbox_header.logicalIndexAt(pos)
         if col != COL_CORRESPONDENT:
             return
         menu = QMenu(self)
@@ -287,7 +362,7 @@ class MessageTableView(QTableView):
         show_to.triggered.connect(lambda: self._manual_toggle(True))
         menu.addAction(show_from)
         menu.addAction(show_to)
-        menu.exec(self.horizontalHeader().viewport().mapToGlobal(pos))
+        menu.exec(self._checkbox_header.viewport().mapToGlobal(pos))
 
     def _build_context_menu(self) -> None:
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -311,6 +386,8 @@ class MessageTableView(QTableView):
         move_act = menu.addAction(f"Move to… ({n} msg(s))")
         remove_label_act = menu.addAction(f"Remove Label ({n} msg(s))")
         menu.addSeparator()
+        unsub_act = menu.addAction(f"Unsubscribe ({n} msg(s))")
+        menu.addSeparator()
         headers_act = menu.addAction("View Headers…")
 
         extract_act.triggered.connect(lambda: self.extract_requested.emit(selected))
@@ -320,6 +397,7 @@ class MessageTableView(QTableView):
         delete_act.triggered.connect(lambda: self.delete_requested.emit(selected))
         move_act.triggered.connect(lambda: self.move_requested.emit(selected))
         remove_label_act.triggered.connect(lambda: self.remove_label_requested.emit(selected))
+        unsub_act.triggered.connect(lambda: self.unsubscribe_requested.emit(selected))
         headers_act.triggered.connect(
             lambda: self.view_headers_requested.emit(selected[0]) if selected else None
         )
