@@ -981,3 +981,69 @@ class MessageRepository:
                 ),
             ).fetchall()
         return [Message.from_row(dict(r)) for r in rows]
+
+
+class BlocklistRepository:
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def add(self, pattern: str, source: str = "local") -> None:
+        pattern = pattern.strip().lower()
+        self._conn.execute(
+            "INSERT OR IGNORE INTO blocked_senders (pattern, source) VALUES (?, ?)",
+            (pattern, source),
+        )
+        self._conn.commit()
+
+    def add_many(self, patterns: list[str], source: str) -> int:
+        """Insert patterns, return count of newly added."""
+        count = 0
+        for p in patterns:
+            p = p.strip().lower()
+            if not p or p.startswith("#"):
+                continue
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO blocked_senders (pattern, source) VALUES (?, ?)",
+                (p, source),
+            )
+            count += cur.rowcount
+        self._conn.commit()
+        return count
+
+    def remove(self, pattern: str) -> None:
+        self._conn.execute("DELETE FROM blocked_senders WHERE pattern = ?", (pattern.lower(),))
+        self._conn.commit()
+
+    def get_all(self) -> list[dict]:
+        cur = self._conn.execute(
+            "SELECT pattern, source, added_at FROM blocked_senders ORDER BY source, pattern"
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_patterns(self) -> set[str]:
+        cur = self._conn.execute("SELECT pattern FROM blocked_senders")
+        return {r[0] for r in cur.fetchall()}
+
+    def clear_github(self) -> None:
+        self._conn.execute("DELETE FROM blocked_senders WHERE source = 'github'")
+        self._conn.commit()
+
+    def is_blocked(self, from_addr: str, include_community: bool = True) -> bool:
+        if not from_addr:
+            return False
+        import re
+        addr = from_addr.lower()
+        match = re.search(r"<([^>]+)>", addr)
+        email = match.group(1) if match else addr
+        domain = "@" + email.split("@")[-1] if "@" in email else ""
+        if include_community:
+            cur = self._conn.execute(
+                "SELECT 1 FROM blocked_senders WHERE pattern = ? OR (? != '' AND pattern = ?) LIMIT 1",
+                (email, domain, domain),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT 1 FROM blocked_senders WHERE source = 'local' AND (pattern = ? OR (? != '' AND pattern = ?)) LIMIT 1",
+                (email, domain, domain),
+            )
+        return cur.fetchone() is not None

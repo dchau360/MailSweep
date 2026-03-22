@@ -62,12 +62,13 @@ class MoveWorker(QObject):
         for op in moves:
             by_src[op.src_folder].append(op)
 
-        # Detect MOVE capability once
-        try:
-            caps = client.capabilities()
-            has_move = b"MOVE" in caps
-        except Exception:
-            has_move = False
+        # Ensure each unique destination folder exists exactly once before
+        # entering the SELECT loop (avoids redundant LIST calls per source folder).
+        ensured_folders: set[str] = set()
+        for op in moves:
+            if op.dst_folder not in ensured_folders:
+                _ensure_folder(client, op.dst_folder)
+                ensured_folders.add(op.dst_folder)
 
         try:
             for src_folder, ops in by_src.items():
@@ -94,13 +95,14 @@ class MoveWorker(QObject):
                     self.progress.emit(done, total, f"Moving to {dst_folder}…")
 
                     try:
-                        if has_move:
-                            client.move(uids, dst_folder)
-                        else:
-                            # Fallback: COPY + DELETE + EXPUNGE
-                            client.copy(uids, dst_folder)
-                            client.delete_messages(uids)
-                            client.expunge(uids)
+                        # Use COPY + flag + expunge — more reliable than IMAP MOVE
+                        # across providers (Yahoo advertises MOVE but executes it unreliably).
+                        client.copy(uids, dst_folder)
+                        client.set_flags(uids, [b"\\Deleted"])
+                        try:
+                            client.uid_expunge(uids)
+                        except Exception:
+                            client.expunge()
 
                         # Update local DB cache
                         if conn and folder_repo and msg_repo:
@@ -133,6 +135,23 @@ class MoveWorker(QObject):
                 pass
 
         self.finished.emit(done)
+
+
+def _ensure_folder(client, folder_name: str) -> None:
+    """Create an IMAP folder if it doesn't already exist.
+
+    Uses LIST to check existence so the currently-selected folder is not changed.
+    """
+    try:
+        exists = bool(client.list_folders(pattern=folder_name))
+    except Exception:
+        exists = False
+    if not exists:
+        try:
+            client.create_folder(folder_name)
+            logger.info("Created IMAP folder: %s", folder_name)
+        except Exception as exc:
+            logger.warning("Could not create folder %s: %s", folder_name, exc)
 
 
 def _update_db_after_move(conn, folder_repo, msg_repo, uids, src_folder, dst_folder, account_id):

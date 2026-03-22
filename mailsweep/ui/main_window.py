@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 
 import mailsweep.config as cfg
 from mailsweep.config import DB_PATH
-from mailsweep.db.repository import AccountRepository, FolderRepository, MessageRepository
+from mailsweep.db.repository import AccountRepository, BlocklistRepository, FolderRepository, MessageRepository
 from mailsweep.db.schema import init_db
 from mailsweep.models.account import Account
 from mailsweep.models.folder import Folder
@@ -62,6 +62,7 @@ class MainWindow(QMainWindow):
         self._account_repo = AccountRepository(self._conn)
         self._folder_repo = FolderRepository(self._conn)
         self._msg_repo = MessageRepository(self._conn)
+        self._blocklist_repo = BlocklistRepository(self._conn)
 
         # State
         self._current_account: Account | None = None
@@ -187,6 +188,7 @@ class MainWindow(QMainWindow):
         self._msg_table.remove_label_requested.connect(self._on_remove_label)
         self._msg_table.unsubscribe_requested.connect(self._on_unsubscribe_messages)
         self._msg_table.unsubscribe_delete_requested.connect(self._on_unsubscribe_delete_messages)
+        self._msg_table.block_sender_requested.connect(self._on_block_sender)
         self._msg_table.view_headers_requested.connect(self._on_view_headers)
         self._msg_table.show_to_toggled.connect(self._on_show_to_toggled)
         v_splitter.addWidget(self._msg_table)
@@ -248,6 +250,8 @@ class MainWindow(QMainWindow):
         actions_menu.addSeparator()
         actions_menu.addAction("Find Detached Duplicates\u2026", self._on_find_detached)
         actions_menu.addAction("Find Duplicate Labels\u2026", self._on_find_duplicate_labels)
+        actions_menu.addSeparator()
+        actions_menu.addAction("Manage Blocklist\u2026", self._on_manage_blocklist)
 
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction("About MailSweep", self._on_about)
@@ -814,6 +818,8 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         unsub_act      = menu.addAction(f"Unsubscribe ({n} msg(s))")
         unsub_del_act  = menu.addAction(f"Unsubscribe && Delete ({n} msg(s))")
+        menu.addSeparator()
+        block_act      = menu.addAction(f"Block Sender ({len({m.from_addr for m in messages})} address(es))")
 
         extract_act.triggered.connect(lambda: self._on_extract_messages(messages))
         detach_act.triggered.connect(lambda: self._on_detach_messages(messages))
@@ -824,6 +830,7 @@ class MainWindow(QMainWindow):
         remove_lbl_act.triggered.connect(lambda: self._on_remove_label(messages))
         unsub_act.triggered.connect(lambda: self._on_unsubscribe_messages(messages))
         unsub_del_act.triggered.connect(lambda: self._on_unsubscribe_delete_messages(messages))
+        block_act.triggered.connect(lambda: self._on_block_sender(messages))
 
         menu.exec(global_pos)
 
@@ -1008,6 +1015,123 @@ class MainWindow(QMainWindow):
         self._refresh_folder_panel()
         self._refresh_treemap()
         self._refresh_size_label()
+        self._check_blocked_senders()
+
+    BLOCKED_FOLDER = "MailSweep-Blocked"
+
+    def _check_blocked_senders(self) -> None:
+        """After a scan, check if any visible messages are from blocked senders."""
+        patterns = self._blocklist_repo.get_patterns()
+        if not patterns:
+            return
+        messages = self._msg_table.source_model.messages
+        blocked = [m for m in messages if self._blocklist_repo.is_blocked(m.from_addr or "", include_community=cfg.BLOCKLIST_USE_COMMUNITY)]
+        if not blocked:
+            return
+
+        if cfg.BLOCKLIST_AUTO_MOVE:
+            self._move_to_blocked_folder(blocked)
+            return
+
+        # Prompt with a "don't ask again" checkbox
+        from PyQt6.QtWidgets import QCheckBox as _QCheckBox
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Blocked Senders Found")
+        msg_box.setText(
+            f"{len(blocked)} message(s) from blocked senders were found.\n\n"
+            f"Move them to '{self.BLOCKED_FOLDER}' for review?"
+        )
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        auto_cb = _QCheckBox("Always move automatically (don't ask again)")
+        msg_box.setCheckBox(auto_cb)
+        reply = msg_box.exec()
+
+        if auto_cb.isChecked():
+            cfg.BLOCKLIST_AUTO_MOVE = True
+            cfg.save_settings()
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self._move_to_blocked_folder(blocked)
+
+    def _move_to_blocked_folder(self, messages: list[Message]) -> None:
+        """Move messages to the MailSweep-Blocked IMAP folder for review."""
+        from mailsweep.workers.move_worker import MoveOp, MoveWorker
+        folder_map = self._build_folder_name_map()
+        ops = [
+            MoveOp(uid=m.uid, src_folder=folder_map[m.folder_id], dst_folder=self.BLOCKED_FOLDER)
+            for m in messages if m.folder_id in folder_map
+        ]
+        if not ops:
+            return
+        worker = MoveWorker()
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        account = self._current_account
+        thread.started.connect(
+            lambda: worker.run(account, ops, self._conn, self._folder_repo, self._msg_repo)
+        )
+        worker.progress.connect(
+            lambda done, total, msg: self._progress_panel.set_progress(done, total, msg)
+        )
+        worker.error.connect(self._on_scan_error)
+        worker.finished.connect(self._on_move_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._move_thread = thread
+        self._move_worker = worker
+        self._progress_panel.set_running(f"Moving {len(ops)} blocked message(s) to {self.BLOCKED_FOLDER}…")
+        thread.start()
+
+    def _on_block_sender(self, messages: list[Message]) -> None:
+        """Add senders to blocklist and move ALL their emails to MailSweep-Blocked."""
+        import re
+        addrs: set[str] = set()
+        for m in messages:
+            if not m.from_addr:
+                continue
+            addr = m.from_addr.lower()
+            match = re.search(r"<([^>]+)>", addr)
+            email = match.group(1) if match else addr
+            addrs.add(email)
+        if not addrs:
+            return
+
+        addr_list = "\n".join(f"  \u2022 {a}" for a in sorted(addrs))
+        reply = QMessageBox.question(
+            self, "Block Senders",
+            f"Block {len(addrs)} sender(s) and move ALL their emails to '{self.BLOCKED_FOLDER}'?\n\n{addr_list}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        for addr in addrs:
+            self._blocklist_repo.add(addr, source="local")
+
+        # Find all messages from these senders across the whole account
+        folder_ids = self._get_active_folder_ids()
+        all_messages: list[Message] = []
+        for addr in addrs:
+            all_messages.extend(
+                self._msg_repo.query_messages(folder_ids=folder_ids or None, from_filter=addr, limit=10000)
+            )
+
+        # Deduplicate by (uid, folder_id)
+        seen: set[tuple[int, int]] = set()
+        unique: list[Message] = []
+        for m in all_messages:
+            key = (m.uid, m.folder_id)
+            if key not in seen:
+                seen.add(key)
+                unique.append(m)
+
+        if unique:
+            self._move_to_blocked_folder(unique)
+
+    def _on_manage_blocklist(self) -> None:
+        from mailsweep.ui.blocklist_dialog import BlocklistDialog
+        BlocklistDialog(self._blocklist_repo, self).exec()
 
     def _on_scan_error(self, msg: str) -> None:
         self._progress_panel.set_error(msg)
