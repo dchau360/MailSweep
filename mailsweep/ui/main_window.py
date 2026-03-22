@@ -37,6 +37,7 @@ from mailsweep.ui.folder_panel import UNLABELLED_ID, FolderPanel
 from mailsweep.ui.message_table import MessageTableView
 from mailsweep.ui.progress_panel import ProgressPanel
 from mailsweep.ui.treemap_widget import (
+    VIEW_COUNT,
     VIEW_FOLDERS,
     VIEW_MESSAGES,
     VIEW_RECEIVERS,
@@ -69,6 +70,7 @@ class MainWindow(QMainWindow):
         self._scan_worker: QtScanWorker | None = None
         self._op_thread: QThread | None = None
         self._op_worker: object | None = None
+        self._op_queue: list[tuple] = []  # (worker, status_msg, needs_rescan, updates_cache)
         self._move_thread: QThread | None = None
         self._move_worker: object | None = None
         self._op_processed: dict[int, list[int]] = {}  # folder_id → [uids]
@@ -196,6 +198,7 @@ class MainWindow(QMainWindow):
         self._treemap.receiver_clicked.connect(self._on_treemap_receiver_clicked)
         self._treemap.message_clicked.connect(self._on_treemap_message_clicked)
         self._treemap.view_mode_changed.connect(self._on_treemap_view_changed)
+        self._treemap.context_menu_requested.connect(self._on_treemap_context_menu)
         v_splitter.addWidget(self._treemap)
 
         v_splitter.setSizes([500, 200])
@@ -542,6 +545,40 @@ class MainWindow(QMainWindow):
                 for m in messages if m.size_bytes > 0
             ]
 
+        elif mode == VIEW_COUNT:
+            if is_unlabelled:
+                messages = self._query_unlabelled(order_by="size_bytes DESC", limit=5000)
+                from collections import Counter
+                counts: Counter[str] = Counter()
+                sizes: dict[str, int] = {}
+                for m in messages:
+                    addr = m.from_addr or "(unknown)"
+                    counts[addr] += 1
+                    sizes[addr] = sizes.get(addr, 0) + m.size_bytes
+                items = [
+                    TreemapItem(
+                        key=addr,
+                        label=addr,
+                        sublabel=human_size(sizes[addr]),
+                        size_bytes=count,
+                        display_str=f"{count} msgs",
+                    )
+                    for addr, count in counts.most_common()
+                ]
+            else:
+                folder_ids = self._get_active_folder_ids()
+                rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids or None)
+                items = [
+                    TreemapItem(
+                        key=row["sender_email"],
+                        label=row["sender_email"],
+                        sublabel=human_size(row["total_size_bytes"]),
+                        size_bytes=row["message_count"],
+                        display_str=f"{row['message_count']} msgs",
+                    )
+                    for row in rows if row["message_count"] > 0
+                ]
+
         else:
             items = []
 
@@ -711,6 +748,84 @@ class MainWindow(QMainWindow):
 
     def _on_treemap_view_changed(self, mode: int) -> None:
         self._refresh_treemap()
+
+    def _on_treemap_context_menu(self, key: str, view_mode: int, global_pos) -> None:
+        """Show a full context menu for a treemap tile, operating on all messages in that group."""
+        from mailsweep.ui.treemap_widget import (
+            VIEW_COUNT, VIEW_FOLDERS, VIEW_MESSAGES, VIEW_RECEIVERS, VIEW_SENDERS,
+        )
+        if not self._current_account:
+            return
+
+        folder_ids = self._get_active_folder_ids()
+
+        # Resolve messages for the group
+        if view_mode in (VIEW_SENDERS, VIEW_COUNT):
+            messages = self._msg_repo.query_messages(folder_ids=folder_ids or None, from_filter=key, limit=10000)
+        elif view_mode == VIEW_RECEIVERS:
+            messages = self._msg_repo.query_messages(folder_ids=folder_ids or None, to_filter=key, limit=10000)
+        elif view_mode == VIEW_FOLDERS:
+            if key.startswith("msg:"):
+                try:
+                    uid = int(key[4:])
+                    messages = self._msg_repo.query_messages(folder_ids=folder_ids or None, limit=10000)
+                    messages = [m for m in messages if m.uid == uid]
+                except ValueError:
+                    return
+            elif key.startswith("path:"):
+                path = key[5:]
+                if self._current_account.id:
+                    all_folders = self._folder_repo.get_by_account(self._current_account.id)
+                    child_ids = [f.id for f in all_folders
+                                 if f.name.startswith(path + "/") and f.id is not None]
+                    messages = self._msg_repo.query_messages(folder_ids=child_ids or None, limit=10000)
+                else:
+                    return
+            else:
+                try:
+                    fid = int(key)
+                    messages = self._msg_repo.query_messages(folder_ids=[fid], limit=10000)
+                except ValueError:
+                    return
+        elif view_mode == VIEW_MESSAGES:
+            try:
+                uid = int(key)
+                all_msgs = self._msg_repo.query_messages(folder_ids=folder_ids or None, limit=10000)
+                messages = [m for m in all_msgs if m.uid == uid]
+            except ValueError:
+                return
+        else:
+            return
+
+        if not messages:
+            return
+
+        n = len(messages)
+        menu = QMenu(self)
+        extract_act    = menu.addAction(f"Extract Attachments ({n} msg(s))")
+        detach_act     = menu.addAction(f"Detach Attachments ({n} msg(s))")
+        menu.addSeparator()
+        backup_act     = menu.addAction(f"Backup ({n} msg(s))")
+        backup_del_act = menu.addAction(f"Backup && Delete ({n} msg(s))")
+        delete_act     = menu.addAction(f"Delete ({n} msg(s))")
+        menu.addSeparator()
+        move_act       = menu.addAction(f"Move to… ({n} msg(s))")
+        remove_lbl_act = menu.addAction(f"Remove Label ({n} msg(s))")
+        menu.addSeparator()
+        unsub_act      = menu.addAction(f"Unsubscribe ({n} msg(s))")
+        unsub_del_act  = menu.addAction(f"Unsubscribe && Delete ({n} msg(s))")
+
+        extract_act.triggered.connect(lambda: self._on_extract_messages(messages))
+        detach_act.triggered.connect(lambda: self._on_detach_messages(messages))
+        backup_act.triggered.connect(lambda: self._on_backup_messages_only(messages))
+        backup_del_act.triggered.connect(lambda: self._on_backup_messages(messages))
+        delete_act.triggered.connect(lambda: self._on_delete_messages(messages))
+        move_act.triggered.connect(lambda: self._on_move_messages(messages))
+        remove_lbl_act.triggered.connect(lambda: self._on_remove_label(messages))
+        unsub_act.triggered.connect(lambda: self._on_unsubscribe_messages(messages))
+        unsub_del_act.triggered.connect(lambda: self._on_unsubscribe_delete_messages(messages))
+
+        menu.exec(global_pos)
 
     # ── Scan ──────────────────────────────────────────────────────────────────
 
@@ -1278,7 +1393,24 @@ class MainWindow(QMainWindow):
         self, worker, status_msg: str, *,
         needs_rescan: bool = False, updates_cache: bool = False,
     ) -> None:
-        """Wire a generic QObject worker to a QThread and start it."""
+        """Queue a worker; starts immediately if no operation is running."""
+        if self._op_thread is not None:
+            self._op_queue.append((worker, status_msg, needs_rescan, updates_cache))
+            queued = len(self._op_queue)
+            logger.info("Worker queued (%d in queue): %s", queued, status_msg)
+            self._progress_panel.set_running(
+                self._progress_panel._status_label.text() + f"  [{queued} queued]"
+                if hasattr(self._progress_panel, "_status_label") else
+                f"[{queued} operation(s) queued]"
+            )
+            return
+        self._start_worker(worker, status_msg, needs_rescan, updates_cache)
+
+    def _start_worker(
+        self, worker, status_msg: str,
+        needs_rescan: bool = False, updates_cache: bool = False,
+    ) -> None:
+        """Wire a worker to a QThread and start it immediately."""
         self._op_processed = {}
         self._op_needs_rescan = needs_rescan
         self._op_updates_cache = updates_cache
@@ -1302,13 +1434,15 @@ class MainWindow(QMainWindow):
         if hasattr(worker, "finished"):
             worker.finished.connect(self._on_op_finished)
 
-        # Keep references to prevent garbage collection before thread runs
+        # Keep references to prevent garbage collection before thread runs.
+        # _cleanup captures `thread` so it only clears refs if no new job has started.
         self._op_worker = worker
         self._op_thread = thread
 
-        def _cleanup():
-            self._op_worker = None
-            self._op_thread = None
+        def _cleanup(_t=thread):
+            if self._op_thread is _t:
+                self._op_worker = None
+                self._op_thread = None
         thread.finished.connect(_cleanup)
 
         self._progress_panel.set_running(status_msg)
@@ -1322,7 +1456,6 @@ class MainWindow(QMainWindow):
     def _on_op_finished(self) -> None:
         if self._is_closing:
             return
-        self._progress_panel.set_done("Operation complete")
 
         # Remove processed UIDs from cache and recompute folder stats
         affected_folder_ids = list(self._op_processed.keys())
@@ -1332,7 +1465,16 @@ class MainWindow(QMainWindow):
                 self._folder_repo.update_stats(folder_id)
         self._op_processed = {}
 
-        if self._op_needs_rescan and affected_folder_ids:
+        needs_rescan = self._op_needs_rescan
+
+        # Start the next queued operation before refreshing the UI
+        if self._op_queue:
+            next_worker, next_msg, next_rescan, next_cache = self._op_queue.pop(0)
+            self._start_worker(next_worker, next_msg, next_rescan, next_cache)
+        else:
+            self._progress_panel.set_done("Operation complete")
+
+        if needs_rescan and affected_folder_ids:
             # Detach APPENDs replacement messages — rescan to pick up new UIDs
             folders = [
                 f for fid in affected_folder_ids
