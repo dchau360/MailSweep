@@ -1,6 +1,6 @@
 [project]
 name = "mailsweep"
-version = "0.5.7"
+version = "0.5.8-dchau.1"
 description = "IMAP Mailbox Analyzer & Cleaner — visualize and reclaim email storage"
 readme = "README.md"
 license = {text = "MIT"}
