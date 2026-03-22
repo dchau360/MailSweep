@@ -987,28 +987,13 @@ class BlocklistRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
-    def add(self, pattern: str, source: str = "local") -> None:
+    def add(self, pattern: str) -> None:
         pattern = pattern.strip().lower()
         self._conn.execute(
-            "INSERT OR IGNORE INTO blocked_senders (pattern, source) VALUES (?, ?)",
-            (pattern, source),
+            "INSERT OR IGNORE INTO blocked_senders (pattern, source) VALUES (?, 'local')",
+            (pattern,),
         )
         self._conn.commit()
-
-    def add_many(self, patterns: list[str], source: str) -> int:
-        """Insert patterns, return count of newly added."""
-        count = 0
-        for p in patterns:
-            p = p.strip().lower()
-            if not p or p.startswith("#"):
-                continue
-            cur = self._conn.execute(
-                "INSERT OR IGNORE INTO blocked_senders (pattern, source) VALUES (?, ?)",
-                (p, source),
-            )
-            count += cur.rowcount
-        self._conn.commit()
-        return count
 
     def remove(self, pattern: str) -> None:
         self._conn.execute("DELETE FROM blocked_senders WHERE pattern = ?", (pattern.lower(),))
@@ -1016,19 +1001,16 @@ class BlocklistRepository:
 
     def get_all(self) -> list[dict]:
         cur = self._conn.execute(
-            "SELECT pattern, source, added_at FROM blocked_senders ORDER BY source, pattern"
+            "SELECT pattern, added_at FROM blocked_senders WHERE source = 'local' ORDER BY pattern"
         )
         return [dict(r) for r in cur.fetchall()]
 
-    def get_patterns(self) -> set[str]:
-        cur = self._conn.execute("SELECT pattern FROM blocked_senders")
+    def get_local_patterns(self) -> set[str]:
+        cur = self._conn.execute("SELECT pattern FROM blocked_senders WHERE source = 'local'")
         return {r[0] for r in cur.fetchall()}
 
-    def clear_github(self) -> None:
-        self._conn.execute("DELETE FROM blocked_senders WHERE source = 'github'")
-        self._conn.commit()
-
-    def is_blocked(self, from_addr: str, include_community: bool = True) -> bool:
+    def is_blocked(self, from_addr: str, community_patterns: set[str] | None = None) -> bool:
+        """Check if from_addr matches local DB or (optionally) a set of community patterns."""
         if not from_addr:
             return False
         import re
@@ -1036,14 +1018,18 @@ class BlocklistRepository:
         match = re.search(r"<([^>]+)>", addr)
         email = match.group(1) if match else addr
         domain = "@" + email.split("@")[-1] if "@" in email else ""
-        if include_community:
-            cur = self._conn.execute(
-                "SELECT 1 FROM blocked_senders WHERE pattern = ? OR (? != '' AND pattern = ?) LIMIT 1",
-                (email, domain, domain),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT 1 FROM blocked_senders WHERE source = 'local' AND (pattern = ? OR (? != '' AND pattern = ?)) LIMIT 1",
-                (email, domain, domain),
-            )
-        return cur.fetchone() is not None
+
+        # Check local DB
+        cur = self._conn.execute(
+            "SELECT 1 FROM blocked_senders WHERE source = 'local' AND (pattern = ? OR (? != '' AND pattern = ?)) LIMIT 1",
+            (email, domain, domain),
+        )
+        if cur.fetchone() is not None:
+            return True
+
+        # Check community patterns (separate file, not in DB)
+        if community_patterns:
+            if email in community_patterns or (domain and domain in community_patterns):
+                return True
+
+        return False

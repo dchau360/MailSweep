@@ -1021,11 +1021,15 @@ class MainWindow(QMainWindow):
 
     def _check_blocked_senders(self) -> None:
         """After a scan, check if any visible messages are from blocked senders."""
-        patterns = self._blocklist_repo.get_patterns()
-        if not patterns:
+        local_patterns = self._blocklist_repo.get_local_patterns()
+        community_patterns = cfg.load_community_patterns()
+        if not local_patterns and not community_patterns:
             return
         messages = self._msg_table.source_model.messages
-        blocked = [m for m in messages if self._blocklist_repo.is_blocked(m.from_addr or "", include_community=cfg.BLOCKLIST_USE_COMMUNITY)]
+        blocked = [
+            m for m in messages
+            if self._blocklist_repo.is_blocked(m.from_addr or "", community_patterns=community_patterns or None)
+        ]
         if not blocked:
             return
 
@@ -1107,7 +1111,7 @@ class MainWindow(QMainWindow):
             return
 
         for addr in addrs:
-            self._blocklist_repo.add(addr, source="local")
+            self._blocklist_repo.add(addr)
 
         # Find all messages from these senders across the whole account
         folder_ids = self._get_active_folder_ids()

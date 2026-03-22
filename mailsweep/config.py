@@ -22,6 +22,7 @@ DB_PATH: Path = DATA_DIR / "mailsweep.db"
 DEFAULT_SAVE_DIR: Path = Path.home() / "MailSweep_Attachments"
 LOG_PATH: Path = DATA_DIR / "mailsweep.log"
 SETTINGS_PATH: Path = CONFIG_DIR / "settings.json"
+COMMUNITY_BLOCKLIST_PATH: Path = CONFIG_DIR / "community_blocklist.txt"
 
 for _d in (DATA_DIR, CONFIG_DIR, DEFAULT_SAVE_DIR):
     _d.mkdir(parents=True, exist_ok=True)
@@ -118,6 +119,23 @@ def load_settings() -> None:
             AI_API_KEY = key
     except Exception as exc:
         logger.debug("Could not load AI API key from keyring: %s", exc)
+
+
+def load_community_patterns() -> set[str]:
+    """Load community blocklist patterns from the local cache file.
+
+    Returns an empty set if the file doesn't exist or community list is disabled.
+    """
+    if not BLOCKLIST_USE_COMMUNITY:
+        return set()
+    if not COMMUNITY_BLOCKLIST_PATH.exists():
+        return set()
+    try:
+        lines = COMMUNITY_BLOCKLIST_PATH.read_text(encoding="utf-8").splitlines()
+        return {l.strip().lower() for l in lines if l.strip() and not l.strip().startswith("#")}
+    except Exception as exc:
+        logger.warning("Could not load community blocklist: %s", exc)
+        return set()
 
 
 # Load on import so settings are available immediately

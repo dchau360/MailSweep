@@ -48,6 +48,7 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **Fast batch delete** — bulk delete sends messages to Trash in optimised batches with automatic rate-limit retry; significantly faster than deleting one message at a time
 - **Provider profiles** — Add Account dialog includes preset profiles for Gmail, Outlook, Yahoo, ProtonMail, and Fastmail that auto-fill host, port, SSL, and auth type
 - **Count view** — treemap view that sizes tiles by number of emails per sender rather than storage size; makes it easy to spot and bulk-delete spam where a single address has sent 50+ messages
+- **Sender blocklist** — block individual addresses or entire domains; blocked messages are automatically moved to a dedicated `MailSweep-Blocked` IMAP folder for review rather than deleted; supports a local blocklist (stored in SQLite) and an optional community blocklist (synced from any raw `.txt` URL); both lists are managed from the Blocklist Manager dialog
 
 ## Installation
 
@@ -296,6 +297,34 @@ loaded on your local Ollama or LM Studio instance.
 
 ---
 
+### Sender Blocklist
+
+**Actions → Manage Blocklist** · **Right-click → Block Sender**
+
+Block individual email addresses or entire domains from appearing in your inbox. Blocked messages are moved to a dedicated **`MailSweep-Blocked`** IMAP folder (not Trash) so you can review them before permanently deleting.
+
+**Blocking a sender:**
+1. Select one or more messages in the message table or treemap
+2. Right-click → **Block Sender**
+3. MailSweep adds the address to the blocklist and moves *all* emails from that sender (across the entire account) to `MailSweep-Blocked`
+
+**Post-scan detection:** After every scan MailSweep checks whether any visible messages are from blocked senders. If matches are found you are prompted to move them. Enable **Auto-move** (in Settings or via the prompt checkbox) to move them silently without asking.
+
+**Blocklist Manager** (Actions → Manage Blocklist) has two tabs:
+
+| Tab | What it does |
+|-----|-------------|
+| **Local** | Add/remove/edit individual patterns; double-click a row to edit it; export to `.txt`; import from `.txt` |
+| **Community** | Enable/disable a community-sourced blocklist; enter any raw `.txt` URL (e.g. a GitHub raw link); Sync downloads and caches the list locally; you can also manually add, remove, or edit entries and save them |
+
+**Pattern format:**
+- `spam@example.com` — block a specific address
+- `@example.com` — block an entire domain
+
+**Community blocklist:** Point the URL to any publicly hosted `.txt` file (one pattern per line, `#` for comments). The list is stored locally at `~/.config/mailsweep/community_blocklist.txt` and is never merged into the local SQLite database — the two lists remain independent.
+
+---
+
 ### All Mail (Gmail) — Disable Option
 
 Gmail's All Mail folder is a virtual folder containing every message regardless of label.
@@ -325,6 +354,7 @@ treemaps, and duplicate searches since every message appears at least twice.
 | **Delete** | Yes | Move message to Trash (Gmail-safe) |
 | **Unsubscribe** | No | Send unsubscribe request for selected mailing lists |
 | **Unsubscribe & Delete** | Yes | Unsubscribe then move messages to Trash |
+| **Block Sender** | Yes | Add sender to blocklist and move all their emails to `MailSweep-Blocked` |
 | **AI Move** | Yes | LLM suggests moves → user confirms → messages moved via IMAP |
 
 ### Extract vs Detach
@@ -349,6 +379,7 @@ Both operations save attachments to your local disk, but they differ in what hap
 |------|------|
 | SQLite cache | `~/.local/share/mailsweep/mailsweep.db` |
 | Settings | `~/.config/mailsweep/settings.json` |
+| Community blocklist cache | `~/.config/mailsweep/community_blocklist.txt` |
 | Saved attachments | `~/MailSweep_Attachments/` |
 | Backup .eml files | `~/MailSweep_Attachments/backups/` |
 | App log | `~/.local/share/mailsweep/mailsweep.log` |
