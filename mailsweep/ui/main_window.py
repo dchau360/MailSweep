@@ -1001,11 +1001,16 @@ class MainWindow(QMainWindow):
             self._msg_table.append_messages(messages)
             # Performance: only check newly fetched messages against the blocklist,
             # not the entire mailbox. Existing messages are never re-checked.
-            # Skip messages already in MailSweep-Blocked — they are there on purpose.
+            # Skip messages already in MailSweep-Blocked or Trash — no need to move them.
+            from mailsweep.imap.connection import find_trash_folder
             folder_map = self._build_folder_name_map()
+            trash_folder = find_trash_folder(folder_map)
+            skip_folders = {self.BLOCKED_FOLDER}
+            if trash_folder:
+                skip_folders.add(trash_folder)
             community_patterns = cfg.load_community_patterns()
             for m in messages:
-                if folder_map.get(m.folder_id) == self.BLOCKED_FOLDER:
+                if folder_map.get(m.folder_id) in skip_folders:
                     continue
                 if self._blocklist_repo.is_blocked(m.from_addr or "", community_patterns=community_patterns or None):
                     self._scan_blocked_queue.append(m)
