@@ -198,6 +198,7 @@ class MainWindow(QMainWindow):
         self._treemap.receiver_clicked.connect(self._on_treemap_receiver_clicked)
         self._treemap.message_clicked.connect(self._on_treemap_message_clicked)
         self._treemap.view_mode_changed.connect(self._on_treemap_view_changed)
+        self._treemap.context_menu_requested.connect(self._on_treemap_context_menu)
         v_splitter.addWidget(self._treemap)
 
         v_splitter.setSizes([500, 200])
@@ -747,6 +748,84 @@ class MainWindow(QMainWindow):
 
     def _on_treemap_view_changed(self, mode: int) -> None:
         self._refresh_treemap()
+
+    def _on_treemap_context_menu(self, key: str, view_mode: int, global_pos) -> None:
+        """Show a full context menu for a treemap tile, operating on all messages in that group."""
+        from mailsweep.ui.treemap_widget import (
+            VIEW_COUNT, VIEW_FOLDERS, VIEW_MESSAGES, VIEW_RECEIVERS, VIEW_SENDERS,
+        )
+        if not self._current_account:
+            return
+
+        folder_ids = self._get_active_folder_ids()
+
+        # Resolve messages for the group
+        if view_mode in (VIEW_SENDERS, VIEW_COUNT):
+            messages = self._msg_repo.query_messages(folder_ids=folder_ids or None, from_filter=key, limit=10000)
+        elif view_mode == VIEW_RECEIVERS:
+            messages = self._msg_repo.query_messages(folder_ids=folder_ids or None, to_filter=key, limit=10000)
+        elif view_mode == VIEW_FOLDERS:
+            if key.startswith("msg:"):
+                try:
+                    uid = int(key[4:])
+                    messages = self._msg_repo.query_messages(folder_ids=folder_ids or None, limit=10000)
+                    messages = [m for m in messages if m.uid == uid]
+                except ValueError:
+                    return
+            elif key.startswith("path:"):
+                path = key[5:]
+                if self._current_account.id:
+                    all_folders = self._folder_repo.get_by_account(self._current_account.id)
+                    child_ids = [f.id for f in all_folders
+                                 if f.name.startswith(path + "/") and f.id is not None]
+                    messages = self._msg_repo.query_messages(folder_ids=child_ids or None, limit=10000)
+                else:
+                    return
+            else:
+                try:
+                    fid = int(key)
+                    messages = self._msg_repo.query_messages(folder_ids=[fid], limit=10000)
+                except ValueError:
+                    return
+        elif view_mode == VIEW_MESSAGES:
+            try:
+                uid = int(key)
+                all_msgs = self._msg_repo.query_messages(folder_ids=folder_ids or None, limit=10000)
+                messages = [m for m in all_msgs if m.uid == uid]
+            except ValueError:
+                return
+        else:
+            return
+
+        if not messages:
+            return
+
+        n = len(messages)
+        menu = QMenu(self)
+        extract_act    = menu.addAction(f"Extract Attachments ({n} msg(s))")
+        detach_act     = menu.addAction(f"Detach Attachments ({n} msg(s))")
+        menu.addSeparator()
+        backup_act     = menu.addAction(f"Backup ({n} msg(s))")
+        backup_del_act = menu.addAction(f"Backup && Delete ({n} msg(s))")
+        delete_act     = menu.addAction(f"Delete ({n} msg(s))")
+        menu.addSeparator()
+        move_act       = menu.addAction(f"Move to… ({n} msg(s))")
+        remove_lbl_act = menu.addAction(f"Remove Label ({n} msg(s))")
+        menu.addSeparator()
+        unsub_act      = menu.addAction(f"Unsubscribe ({n} msg(s))")
+        unsub_del_act  = menu.addAction(f"Unsubscribe && Delete ({n} msg(s))")
+
+        extract_act.triggered.connect(lambda: self._on_extract_messages(messages))
+        detach_act.triggered.connect(lambda: self._on_detach_messages(messages))
+        backup_act.triggered.connect(lambda: self._on_backup_messages_only(messages))
+        backup_del_act.triggered.connect(lambda: self._on_backup_messages(messages))
+        delete_act.triggered.connect(lambda: self._on_delete_messages(messages))
+        move_act.triggered.connect(lambda: self._on_move_messages(messages))
+        remove_lbl_act.triggered.connect(lambda: self._on_remove_label(messages))
+        unsub_act.triggered.connect(lambda: self._on_unsubscribe_messages(messages))
+        unsub_del_act.triggered.connect(lambda: self._on_unsubscribe_delete_messages(messages))
+
+        menu.exec(global_pos)
 
     # ── Scan ──────────────────────────────────────────────────────────────────
 
