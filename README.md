@@ -52,10 +52,12 @@ bulk attachment extraction, detach, backup, and delete operations.
 
 ## Installation
 
+### macOS / Linux
+
 ```bash
 # Clone and install
 git clone https://github.com/jitrc/MailSweep.git
-cd mailsweep
+cd MailSweep
 uv sync --dev
 
 # Run the GUI
@@ -64,6 +66,33 @@ uv run mailsweep
 # Run the CLI (prints folder sizes, no GUI)
 uv run mailsweep-cli --host imap.gmail.com --username you@gmail.com
 ```
+
+### Windows
+
+**Option A — Standalone executable (no Python required)**
+
+Download `MailSweep-windows.exe` from the [latest release](https://github.com/jitrc/MailSweep/releases/latest) and double-click to run. Windows Defender SmartScreen may warn about an unrecognised publisher — click **More info → Run anyway**.
+
+**Option B — Run from source**
+
+1. Install [Python 3.11+](https://www.python.org/downloads/windows/) (check "Add Python to PATH" during setup)
+2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/):
+   ```powershell
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+3. Clone and run:
+   ```powershell
+   git clone https://github.com/jitrc/MailSweep.git
+   cd MailSweep
+   uv sync --dev
+   uv run mailsweep
+   ```
+
+**Windows notes:**
+- Credentials are stored in **Windows Credential Manager** (not in any file)
+- The SQLite cache is stored at `%LOCALAPPDATA%\mailsweep\mailsweep.db`
+- Settings are stored at `%APPDATA%\mailsweep\settings.json`
+- The community blocklist cache is at `%APPDATA%\mailsweep\community_blocklist.txt`
 
 ### Requirements
 
@@ -299,16 +328,17 @@ loaded on your local Ollama or LM Studio instance.
 
 ### Sender Blocklist
 
-**Actions → Manage Blocklist** · **Right-click → Block Sender**
+**Actions → Manage Blocklist**
 
 Block individual email addresses or entire domains from appearing in your inbox. Blocked messages are moved to a dedicated **`MailSweep-Blocked`** IMAP folder (not Trash) so you can review them before permanently deleting.
 
-**Blocking a sender:**
-1. Select one or more messages in the message table or treemap
-2. Right-click → **Block Sender**
-3. MailSweep adds the address to the blocklist and moves currently visible emails from that sender to `MailSweep-Blocked`; any remaining emails in other folders are caught and moved on the next rescan
+**Adding senders to the blocklist:**
+- Right-click → **Unsubscribe && Block** — sends an unsubscribe request and adds the sender to your local blocklist
+- Right-click → **Unsubscribe, Block && Delete** — unsubscribes, adds to blocklist, and deletes selected messages
+- Right-click → **Delete All From Sender** — deletes all messages from that sender across the entire account (does not add to blocklist)
+- Open **Actions → Manage Blocklist** to add patterns manually
 
-**Post-scan detection:** After every scan MailSweep checks whether any visible messages are from blocked senders. If matches are found you are prompted to move them. Enable **Auto-move** (in Settings or via the prompt checkbox) to move them silently without asking.
+**Post-scan detection:** During every scan, MailSweep checks only newly fetched messages against the blocklist (for performance — existing messages are never re-checked). Messages already in `MailSweep-Blocked` are skipped during the blocklist check since they are already in the right place. If blocked senders are found among new messages, you are prompted to move them. Enable **Auto-move** (in Settings or via the prompt checkbox) to move them silently without asking.
 
 **Blocklist Manager** (Actions → Manage Blocklist) has two tabs:
 
@@ -352,9 +382,9 @@ treemaps, and duplicate searches since every message appears at least twice.
 | **Backup** | No | Download full message as .eml file |
 | **Backup & Delete** | Yes | Download .eml then move message to Trash |
 | **Delete** | Yes | Move message to Trash (Gmail-safe) |
-| **Unsubscribe** | No | Send unsubscribe request for selected mailing lists |
-| **Unsubscribe & Delete** | Yes | Unsubscribe then move messages to Trash |
-| **Block Sender** | Yes | Add sender to blocklist and move visible emails to `MailSweep-Blocked`; remaining emails moved on next rescan |
+| **Unsubscribe && Block** | No | Send unsubscribe request and add sender to local blocklist |
+| **Unsubscribe, Block && Delete** | Yes | Unsubscribe, add sender to local blocklist, then move messages to Trash |
+| **Delete All From Sender** | Yes | Delete all messages from that sender across the entire account |
 | **AI Move** | Yes | LLM suggests moves → user confirms → messages moved via IMAP |
 
 ### Extract vs Detach
