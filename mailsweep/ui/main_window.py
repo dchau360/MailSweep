@@ -1088,7 +1088,11 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _on_block_sender(self, messages: list[Message]) -> None:
-        """Add senders to blocklist and move ALL their emails to MailSweep-Blocked."""
+        """Add senders to blocklist and move currently visible emails to MailSweep-Blocked.
+
+        Only moves messages already loaded in the table — remaining emails from this
+        sender will be caught and moved on the next rescan.
+        """
         import re
         addrs: set[str] = set()
         for m in messages:
@@ -1104,7 +1108,8 @@ class MainWindow(QMainWindow):
         addr_list = "\n".join(f"  \u2022 {a}" for a in sorted(addrs))
         reply = QMessageBox.question(
             self, "Block Senders",
-            f"Block {len(addrs)} sender(s) and move ALL their emails to '{self.BLOCKED_FOLDER}'?\n\n{addr_list}",
+            f"Block {len(addrs)} sender(s) and move their visible emails to '{self.BLOCKED_FOLDER}'?\n\n"
+            f"{addr_list}\n\nAny remaining emails from these senders will be moved on the next rescan.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -1113,25 +1118,11 @@ class MainWindow(QMainWindow):
         for addr in addrs:
             self._blocklist_repo.add(addr)
 
-        # Find all messages from these senders across the whole account
-        folder_ids = self._get_active_folder_ids()
-        all_messages: list[Message] = []
-        for addr in addrs:
-            all_messages.extend(
-                self._msg_repo.query_messages(folder_ids=folder_ids or None, from_filter=addr, limit=10000)
-            )
-
-        # Deduplicate by (uid, folder_id)
-        seen: set[tuple[int, int]] = set()
-        unique: list[Message] = []
-        for m in all_messages:
-            key = (m.uid, m.folder_id)
-            if key not in seen:
-                seen.add(key)
-                unique.append(m)
-
-        if unique:
-            self._move_to_blocked_folder(unique)
+        # Move only the currently visible messages from these senders
+        visible = self._msg_table.source_model.messages
+        to_move = [m for m in visible if self._blocklist_repo.is_blocked(m.from_addr or "")]
+        if to_move:
+            self._move_to_blocked_folder(to_move)
 
     def _on_manage_blocklist(self) -> None:
         from mailsweep.ui.blocklist_dialog import BlocklistDialog

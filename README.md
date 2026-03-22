@@ -306,7 +306,7 @@ Block individual email addresses or entire domains from appearing in your inbox.
 **Blocking a sender:**
 1. Select one or more messages in the message table or treemap
 2. Right-click → **Block Sender**
-3. MailSweep adds the address to the blocklist and moves *all* emails from that sender (across the entire account) to `MailSweep-Blocked`
+3. MailSweep adds the address to the blocklist and moves currently visible emails from that sender to `MailSweep-Blocked`; any remaining emails in other folders are caught and moved on the next rescan
 
 **Post-scan detection:** After every scan MailSweep checks whether any visible messages are from blocked senders. If matches are found you are prompted to move them. Enable **Auto-move** (in Settings or via the prompt checkbox) to move them silently without asking.
 
@@ -354,7 +354,7 @@ treemaps, and duplicate searches since every message appears at least twice.
 | **Delete** | Yes | Move message to Trash (Gmail-safe) |
 | **Unsubscribe** | No | Send unsubscribe request for selected mailing lists |
 | **Unsubscribe & Delete** | Yes | Unsubscribe then move messages to Trash |
-| **Block Sender** | Yes | Add sender to blocklist and move all their emails to `MailSweep-Blocked` |
+| **Block Sender** | Yes | Add sender to blocklist and move visible emails to `MailSweep-Blocked`; remaining emails moved on next rescan |
 | **AI Move** | Yes | LLM suggests moves → user confirms → messages moved via IMAP |
 
 ### Extract vs Detach
