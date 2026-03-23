@@ -19,6 +19,18 @@ from PyQt6.QtWidgets import (
 from mailsweep.utils.size_fmt import human_size
 
 
+class _NumericItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts by a numeric key rather than display text."""
+    def __init__(self, display: str, sort_key: float) -> None:
+        super().__init__(display)
+        self._sort_key = sort_key
+
+    def __lt__(self, other: "QTableWidgetItem") -> bool:
+        if isinstance(other, _NumericItem):
+            return self._sort_key < other._sort_key
+        return super().__lt__(other)
+
+
 class SenderListDialog(QDialog):
     """Shows all unique senders with message count and total size.
 
@@ -99,7 +111,7 @@ class SenderListDialog(QDialog):
             count_item = QTableWidgetItem()
             count_item.setData(Qt.ItemDataRole.DisplayRole, count)
 
-            size_item = QTableWidgetItem(human_size(size))
+            size_item = _NumericItem(human_size(size), size)
             size_item.setData(Qt.ItemDataRole.UserRole, size)
 
             self._table.setItem(i, 0, name_item)
