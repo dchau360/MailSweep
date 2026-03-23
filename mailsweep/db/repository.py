@@ -321,13 +321,15 @@ class MessageRepository:
         return [Message.from_row(dict(r)) for r in rows]
 
     def get_sender_summary(
-        self, folder_ids: list[int] | None = None
+        self,
+        folder_ids: list[int] | None = None,
+        exclude_folder_ids: list[int] | None = None,
     ) -> list[dict[str, Any]]:
         """Return per-sender aggregation grouped by email address.
 
         from_addr may be 'Name <email>' or just 'email'. We extract the
         email portion so 'Alice <a@b.com>' and 'A <a@b.com>' merge into
-        one group. The display name shown is the most common variant.
+        one group. The most common from_addr variant is used as the display name.
         """
         clauses: list[str] = []
         params: list[Any] = []
@@ -335,8 +337,12 @@ class MessageRepository:
             placeholders = ",".join("?" * len(folder_ids))
             clauses.append(f"folder_id IN ({placeholders})")
             params.extend(folder_ids)
+        if exclude_folder_ids:
+            placeholders = ",".join("?" * len(exclude_folder_ids))
+            clauses.append(f"folder_id NOT IN ({placeholders})")
+            params.extend(exclude_folder_ids)
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
-        # Extract email: take substring between < and >, else use full from_addr
+        # Extract email; pick the most common from_addr as the display name
         sql = f"""
             SELECT
                 CASE WHEN INSTR(from_addr, '<') > 0
@@ -345,14 +351,14 @@ class MessageRepository:
                                        INSTR(from_addr, '>') - INSTR(from_addr, '<') - 1))
                      ELSE LOWER(from_addr)
                 END AS sender_email,
-                from_addr,
+                MAX(from_addr)  AS from_addr,
                 COUNT(*)        AS message_count,
                 SUM(size_bytes) AS total_size_bytes
             FROM messages
             {where}
             GROUP BY sender_email
-            ORDER BY total_size_bytes DESC
-            LIMIT 1000
+            ORDER BY message_count DESC
+            LIMIT 2000
         """
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]

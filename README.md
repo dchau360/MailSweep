@@ -47,7 +47,10 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **Select-all checkbox** — checkbox in the message table header selects or deselects all visible messages; shows tri-state (partial) indicator when only some rows are checked
 - **Fast batch delete** — bulk delete sends messages to Trash in optimised batches with automatic rate-limit retry; significantly faster than deleting one message at a time
 - **Provider profiles** — Add Account dialog includes preset profiles for Gmail, Outlook, Yahoo, ProtonMail, and Fastmail that auto-fill host, port, SSL, and auth type
-- **Sender List** — browse all unique senders sorted by message count or size; status bar shows total size across all senders; multi-select and right-click to delete, block and delete, or backup and delete in one action
+- **Senders sidebar** — inline sender list in the left panel; click a sender to filter the message table to only their messages; right-click for the full sender action menu
+- **Sender List** — browse all unique senders sorted by message count or size; status bar shows total size across all senders; multi-select and right-click to delete, block and delete, backup and delete, permanent delete, or block and permanent delete in one action
+- **Permanent Delete** — right-click any message selection to permanently expunge without moving to Trash first; also available per-sender from the Sender List and Senders sidebar
+- **Empty Trash** — Actions → Empty Trash… permanently expunges all messages in the Trash folder in one step
 - **Sender blocklist** — block individual addresses or entire domains; blocked messages are automatically moved to a dedicated `MailSweep-Blocked` IMAP folder for review rather than deleted; supports a local blocklist (stored in SQLite) and an optional community blocklist (synced from any raw `.txt` URL); both lists are managed from Actions → Manage Blocklist
 
 ## Installation
@@ -325,18 +328,26 @@ loaded on your local Ollama or LM Studio instance.
 
 ---
 
+### Senders Sidebar
+
+The **Senders** tab in the left panel shows all unique senders for the current account, sorted by message count. Click any sender to filter the message table to only their messages. Right-click for the full action menu (same options as Sender List below). Excludes Trash and MailSweep-Blocked from counts. Updates automatically when you switch accounts.
+
+---
+
 ### Sender List
 
 **Actions → Sender List…**
 
-Shows all unique senders across your mailbox (or the selected folder) in a sortable, searchable table with message count and total size. The status bar shows the total size across all displayed senders, and updates to show the selected count and size when rows are highlighted. Useful for quickly identifying who is flooding your inbox.
+Shows all unique senders across your mailbox in a sortable, searchable table with message count and total size. The status bar shows the total size across all displayed senders, and updates to show the selected count and size when rows are highlighted. Useful for quickly identifying who is flooding your inbox.
 
-- **Filter** — type to narrow down by name or email
+- **Filter** — type to narrow down by email address
 - **Sort** — click any column header to sort; defaults to message count descending
 - **Multi-select** — Ctrl+click or Shift+click to select multiple senders
-- **Right-click → Delete All From sender(s)** — delete all messages from selected senders
-- **Right-click → Block && Delete All From sender(s)** — add selected senders to your local blocklist and delete all their messages
-- **Right-click → Backup && Delete All From sender(s)** — download all messages as .eml files then delete them
+- **Right-click → Delete All From sender(s)** — move all messages from selected senders to Trash
+- **Right-click → Block && Delete All From sender(s)** — add to blocklist and move to Trash
+- **Right-click → Backup && Delete All From sender(s)** — download as .eml files then move to Trash
+- **Right-click → Permanent Delete All From sender(s)** — immediately expunge without moving to Trash
+- **Right-click → Block && Permanent Delete All From sender(s)** — add to blocklist and permanently expunge
 
 ---
 
@@ -396,9 +407,13 @@ treemaps, and duplicate searches since every message appears at least twice.
 | **Backup** | No | Download full message as .eml file |
 | **Backup & Delete** | Yes | Download .eml then move message to Trash |
 | **Delete** | Yes | Move message to Trash (Gmail-safe) |
+| **Permanent Delete** | Yes | Immediately expunge without moving to Trash |
 | **Unsubscribe && Block** | No | Send unsubscribe request and add sender to local blocklist |
 | **Unsubscribe, Block && Delete** | Yes | Unsubscribe, add sender to local blocklist, then move messages to Trash |
-| **Delete All From Sender** | Yes | Delete all messages from that sender across the entire account |
+| **Delete All From Sender** | Yes | Move all messages from that sender to Trash |
+| **Permanent Delete All From Sender** | Yes | Immediately expunge all messages from that sender without moving to Trash |
+| **Block && Permanent Delete All From Sender** | Yes | Add to blocklist and permanently expunge all messages from that sender |
+| **Empty Trash** | Yes | Permanently expunge all messages in the Trash folder |
 | **AI Move** | Yes | LLM suggests moves → user confirms → messages moved via IMAP |
 
 ### Extract vs Detach

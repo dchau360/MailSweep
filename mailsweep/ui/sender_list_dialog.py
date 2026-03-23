@@ -42,6 +42,8 @@ class SenderListDialog(QDialog):
     delete_requested = pyqtSignal(list)             # list[str]
     block_delete_requested = pyqtSignal(list)       # list[str]
     backup_delete_requested = pyqtSignal(list)      # list[str]
+    perm_delete_requested = pyqtSignal(list)        # list[str]
+    block_perm_delete_requested = pyqtSignal(list)  # list[str]
 
     def __init__(self, rows: list[dict], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -63,8 +65,8 @@ class SenderListDialog(QDialog):
 
         # Table
         self._table = QTableWidget()
-        self._table.setColumnCount(4)
-        self._table.setHorizontalHeaderLabels(["Name", "Email", "Messages", "Size"])
+        self._table.setColumnCount(3)
+        self._table.setHorizontalHeaderLabels(["Email", "Messages", "Size"])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -72,9 +74,8 @@ class SenderListDialog(QDialog):
         self._table.customContextMenuRequested.connect(self._on_context_menu)
         self._table.setSortingEnabled(True)
         self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.setColumnWidth(0, 200)
-        self._table.setColumnWidth(1, 220)
-        self._table.setColumnWidth(2, 80)
+        self._table.setColumnWidth(0, 300)
+        self._table.setColumnWidth(1, 80)
         self._table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self._table)
 
@@ -94,19 +95,12 @@ class SenderListDialog(QDialog):
         self._table.setSortingEnabled(False)
         self._table.setRowCount(len(rows))
         for i, row in enumerate(rows):
-            full_from = row.get("from_addr", "") or ""
             email = row.get("sender_email", "") or ""
-            if "<" in full_from:
-                name = full_from[:full_from.index("<")].strip().strip('"')
-            else:
-                name = email
-
             count = row.get("message_count", 0)
             size = row.get("total_size_bytes", 0)
 
-            name_item = QTableWidgetItem(name)
-            name_item.setData(Qt.ItemDataRole.UserRole, email)
             email_item = QTableWidgetItem(email)
+            email_item.setData(Qt.ItemDataRole.UserRole, email)
 
             count_item = QTableWidgetItem()
             count_item.setData(Qt.ItemDataRole.DisplayRole, count)
@@ -114,13 +108,12 @@ class SenderListDialog(QDialog):
             size_item = _NumericItem(human_size(size), size)
             size_item.setData(Qt.ItemDataRole.UserRole, size)
 
-            self._table.setItem(i, 0, name_item)
-            self._table.setItem(i, 1, email_item)
-            self._table.setItem(i, 2, count_item)
-            self._table.setItem(i, 3, size_item)
+            self._table.setItem(i, 0, email_item)
+            self._table.setItem(i, 1, count_item)
+            self._table.setItem(i, 2, size_item)
 
         self._table.setSortingEnabled(True)
-        self._table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+        self._table.sortByColumn(1, Qt.SortOrder.DescendingOrder)
         total_size = sum(r.get("total_size_bytes", 0) for r in rows)
         self._update_status(len(rows), total_size)
 
@@ -129,7 +122,6 @@ class SenderListDialog(QDialog):
         filtered = [
             r for r in self._all_rows
             if text in (r.get("sender_email") or "").lower()
-            or text in (r.get("from_addr") or "").lower()
         ]
         self._populate(filtered)
 
@@ -154,7 +146,7 @@ class SenderListDialog(QDialog):
         total = self._table.rowCount()
         if n:
             sel_size = sum(
-                (self._table.item(i, 3).data(Qt.ItemDataRole.UserRole) or 0)
+                (self._table.item(i, 2).data(Qt.ItemDataRole.UserRole) or 0)
                 for i in range(total)
                 if self._table.item(i, 0) and self._table.item(i, 0).data(Qt.ItemDataRole.UserRole) in emails
             )
@@ -178,4 +170,7 @@ class SenderListDialog(QDialog):
         menu.addAction(f"Delete All From {label}", lambda: self.delete_requested.emit(emails))
         menu.addAction(f"Block && Delete All From {label}", lambda: self.block_delete_requested.emit(emails))
         menu.addAction(f"Backup && Delete All From {label}", lambda: self.backup_delete_requested.emit(emails))
+        menu.addSeparator()
+        menu.addAction(f"Permanent Delete All From {label}", lambda: self.perm_delete_requested.emit(emails))
+        menu.addAction(f"Block && Permanent Delete All From {label}", lambda: self.block_perm_delete_requested.emit(emails))
         menu.exec(self._table.viewport().mapToGlobal(pos))

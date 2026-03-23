@@ -74,6 +74,7 @@ class MainWindow(QMainWindow):
         self._move_thread: QThread | None = None
         self._move_worker: object | None = None
         self._scan_blocked_queue: list[Message] = []
+        self._sender_filter: list[str] = []
         self._op_processed: dict[int, list[int]] = {}  # folder_id → [uids]
         self._op_needs_rescan = False
         self._op_updates_cache = False
@@ -168,12 +169,28 @@ class MainWindow(QMainWindow):
         self._filter_bar.filter_changed.connect(self._on_filter_changed)
         main_layout.addWidget(self._filter_bar)
 
-        # Horizontal splitter: [folder tree | right pane]
+        # Horizontal splitter: [left panel (folders/senders tabs) | right pane]
         h_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        from PyQt6.QtWidgets import QTabWidget
+        from mailsweep.ui.sender_panel import SenderPanel
+        self._left_tabs = QTabWidget()
+        self._left_tabs.setDocumentMode(True)
 
         self._folder_panel = FolderPanel()
         self._folder_panel.folder_selected.connect(self._on_folder_selected)
-        h_splitter.addWidget(self._folder_panel)
+        self._left_tabs.addTab(self._folder_panel, "Folders")
+
+        self._sender_panel = SenderPanel()
+        self._sender_panel.sender_selected.connect(self._on_sender_panel_selected)
+        self._sender_panel.delete_requested.connect(self._on_delete_all_from_sender_by_email)
+        self._sender_panel.block_delete_requested.connect(self._on_block_delete_sender)
+        self._sender_panel.backup_delete_requested.connect(self._on_backup_delete_sender)
+        self._sender_panel.perm_delete_requested.connect(self._on_perm_delete_all_from_sender)
+        self._sender_panel.block_perm_delete_requested.connect(self._on_block_perm_delete_sender)
+        self._left_tabs.addTab(self._sender_panel, "Senders")
+
+        h_splitter.addWidget(self._left_tabs)
 
         # Right pane: vertical splitter [message table | treemap]
         v_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -247,6 +264,7 @@ class MainWindow(QMainWindow):
         actions_menu.addAction("Backup…", self._on_backup_only)
         actions_menu.addAction("Backup && Delete…", self._on_backup_delete)
         actions_menu.addAction("Delete Selected…", self._on_delete)
+        actions_menu.addAction("Empty Trash\u2026", self._on_empty_trash)
         actions_menu.addSeparator()
         actions_menu.addAction("Find Detached Duplicates\u2026", self._on_find_detached)
         actions_menu.addAction("Find Duplicate Labels\u2026", self._on_find_duplicate_labels)
@@ -272,6 +290,8 @@ class MainWindow(QMainWindow):
         acc = self._account_combo.itemData(idx)
         if isinstance(acc, Account):
             self._current_account = acc
+            self._current_folder_ids = []
+            self._sender_filter = []
             self._fetch_folder_list()
             self._fetch_quota()
             self._refresh_folder_panel()
@@ -375,11 +395,31 @@ class MainWindow(QMainWindow):
                 unlabelled_stats = (count, size)
 
         self._folder_panel.populate(display_folders, dedup_total=dedup_size, unlabelled_stats=unlabelled_stats)
+        self._refresh_sender_panel()
+
+    def _refresh_sender_panel(self) -> None:
+        if not self._current_account or not self._current_account.id:
+            return
+        folders = self._folder_repo.get_by_account(self._current_account.id)
+        exclude_ids = self._get_trash_and_blocked_folder_ids()
+        exclude_set = set(exclude_ids)
+        folder_ids = [f.id for f in folders if f.id is not None and f.id not in exclude_set]
+        rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids or None)
+        self._sender_panel.populate(rows)
 
     def _on_folder_selected(self, folder_ids: list[int]) -> None:
         self._current_folder_ids = folder_ids
         self._special_view = None
+        self._sender_filter: list[str] = []
         self._update_correspondent_column()
+        self._reload_messages()
+        self._refresh_treemap()
+
+    def _on_sender_panel_selected(self, emails: list[str]) -> None:
+        """Filter message table to show messages from selected sender(s)."""
+        self._sender_filter = emails
+        self._current_folder_ids = []
+        self._special_view = None
         self._reload_messages()
         self._refresh_treemap()
 
@@ -430,6 +470,24 @@ class MainWindow(QMainWindow):
             messages = self._query_unlabelled(**filter_kwargs)
             self._msg_table.set_messages(messages)
             self._update_status(f"{len(messages)} messages (unlabelled)")
+            return
+
+        # Sender panel selection — show all messages from selected senders
+        sender_filter: list[str] = getattr(self, "_sender_filter", [])
+        if sender_filter:
+            filter_kwargs = self._filter_bar.get_filter_kwargs()
+            seen: set[tuple[int, int]] = set()
+            messages = []
+            for email in sender_filter:
+                for m in self._msg_repo.query_messages(from_filter=email, limit=10000, **filter_kwargs):
+                    key = (m.uid, m.folder_id)
+                    if key not in seen:
+                        seen.add(key)
+                        messages.append(m)
+            messages.sort(key=lambda m: m.date or "", reverse=True)
+            self._msg_table.set_messages(messages)
+            label = sender_filter[0] if len(sender_filter) == 1 else f"{len(sender_filter)} senders"
+            self._update_status(f"{len(messages)} messages from {label}")
             return
 
         # Determine folder_ids filter
@@ -781,8 +839,9 @@ class MainWindow(QMainWindow):
         detach_act     = menu.addAction(f"Detach Attachments ({n} msg(s))")
         menu.addSeparator()
         backup_act     = menu.addAction(f"Backup ({n} msg(s))")
-        backup_del_act = menu.addAction(f"Backup && Delete ({n} msg(s))")
-        delete_act     = menu.addAction(f"Delete ({n} msg(s))")
+        backup_del_act  = menu.addAction(f"Backup && Delete ({n} msg(s))")
+        delete_act      = menu.addAction(f"Delete ({n} msg(s))")
+        perm_delete_act = menu.addAction(f"Permanent Delete ({n} msg(s))")
         menu.addSeparator()
         move_act       = menu.addAction(f"Move to… ({n} msg(s))")
         remove_lbl_act = menu.addAction(f"Remove Label ({n} msg(s))")
@@ -797,6 +856,7 @@ class MainWindow(QMainWindow):
         backup_act.triggered.connect(lambda: self._on_backup_messages_only(messages))
         backup_del_act.triggered.connect(lambda: self._on_backup_messages(messages))
         delete_act.triggered.connect(lambda: self._on_delete_messages(messages))
+        perm_delete_act.triggered.connect(lambda: self._on_permanent_delete_messages(messages))
         move_act.triggered.connect(lambda: self._on_move_messages(messages))
         remove_lbl_act.triggered.connect(lambda: self._on_remove_label(messages))
         unsub_act.triggered.connect(lambda: self._on_unsubscribe_messages(messages))
@@ -1142,13 +1202,34 @@ class MainWindow(QMainWindow):
         if not self._current_account:
             return
         from mailsweep.ui.sender_list_dialog import SenderListDialog
-        folder_ids = self._get_active_folder_ids() or None
-        rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids)
+        exclude_ids = set(self._get_trash_and_blocked_folder_ids())
+        active_ids = self._get_active_folder_ids()
+        if active_ids:
+            folder_ids = [f for f in active_ids if f not in exclude_ids]
+        else:
+            all_folders = self._folder_repo.get_by_account(self._current_account.id)
+            folder_ids = [f.id for f in all_folders if f.id is not None and f.id not in exclude_ids]
+        rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids or None)
         dlg = SenderListDialog(rows, self)
         dlg.delete_requested.connect(self._on_delete_all_from_sender_by_email)
         dlg.block_delete_requested.connect(self._on_block_delete_sender)
         dlg.backup_delete_requested.connect(self._on_backup_delete_sender)
+        dlg.perm_delete_requested.connect(self._on_perm_delete_all_from_sender)
+        dlg.block_perm_delete_requested.connect(self._on_block_perm_delete_sender)
         dlg.exec()
+
+    def _get_trash_and_blocked_folder_ids(self) -> list[int]:
+        """Return folder IDs for Trash and MailSweep-Blocked to exclude from sender queries."""
+        if not self._current_account or not self._current_account.id:
+            return []
+        from mailsweep.imap.connection import find_trash_folder
+        folder_map = self._build_folder_name_map()
+        trash_name = find_trash_folder(folder_map)
+        folders = self._folder_repo.get_by_account(self._current_account.id)
+        exclude_names = {self.BLOCKED_FOLDER}
+        if trash_name:
+            exclude_names.add(trash_name)
+        return [f.id for f in folders if f.id is not None and f.name in exclude_names]
 
     def _on_delete_all_from_sender_by_email(self, emails: list[str]) -> None:
         """Delete all messages from a list of email addresses (called from Sender List)."""
@@ -1179,6 +1260,46 @@ class MainWindow(QMainWindow):
                 unique.append(m)
         if unique:
             self._on_backup_messages(unique)
+
+    def _on_perm_delete_all_from_sender(self, emails: list[str]) -> None:
+        """Permanently delete all messages from given senders (no Trash copy)."""
+        folder_ids = self._get_active_folder_ids()
+        all_messages = []
+        for email in emails:
+            all_messages.extend(
+                self._msg_repo.query_messages(folder_ids=folder_ids or None, from_filter=email, limit=10000)
+            )
+        seen: set[tuple[int, int]] = set()
+        unique = []
+        for m in all_messages:
+            key = (m.uid, m.folder_id)
+            if key not in seen:
+                seen.add(key)
+                unique.append(m)
+        if not unique:
+            return
+        reply = QMessageBox.warning(
+            self, "Permanent Delete All From Sender",
+            f"Permanently delete {len(unique)} message(s) from {len(emails)} sender(s)?\n\nThis cannot be undone — messages will NOT be moved to Trash.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        assert self._current_account is not None
+        from mailsweep.workers.delete_worker import DeleteWorker
+        worker = DeleteWorker(
+            account=self._current_account,
+            messages=unique,
+            folder_id_to_name=self._build_folder_name_map(),
+            permanent=True,
+        )
+        self._run_worker(worker, f"Permanently deleting {len(unique)} messages…", updates_cache=True)
+
+    def _on_block_perm_delete_sender(self, emails: list[str]) -> None:
+        """Add to blocklist then permanently delete all messages from given senders."""
+        for email in emails:
+            self._blocklist_repo.add(email)
+        self._on_perm_delete_all_from_sender(emails)
 
     def _on_scan_error(self, msg: str) -> None:
         self._progress_panel.set_error(msg)
@@ -1372,6 +1493,73 @@ class MainWindow(QMainWindow):
             folder_id_to_name=folder_map,
         )
         self._run_worker(worker, f"Deleting {len(messages)} messages…", updates_cache=True)
+
+    def _on_permanent_delete_messages(self, messages: list[Message]) -> None:
+        """Permanently delete messages — no Trash copy, just flag+expunge."""
+        if not messages:
+            QMessageBox.information(self, "No Selection", "Select messages first.")
+            return
+        reply = QMessageBox.warning(
+            self, "Permanent Delete",
+            f"Permanently delete {len(messages)} message(s)?\n\nThis cannot be undone — messages will NOT be moved to Trash.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        assert self._current_account is not None
+        from mailsweep.workers.delete_worker import DeleteWorker
+        worker = DeleteWorker(
+            account=self._current_account,
+            messages=messages,
+            folder_id_to_name=self._build_folder_name_map(),
+            permanent=True,
+        )
+        self._run_worker(worker, f"Permanently deleting {len(messages)} messages…", updates_cache=True)
+
+    def _on_empty_trash(self) -> None:
+        """Permanently delete all messages in the Trash folder."""
+        if not self._current_account or not self._current_account.id:
+            QMessageBox.warning(self, "No Account", "No account selected.")
+            return
+
+        from mailsweep.imap.connection import find_trash_folder
+        folder_map = self._build_folder_name_map()
+        trash_name = find_trash_folder(folder_map)
+        if not trash_name:
+            QMessageBox.information(self, "Empty Trash", "No Trash folder found.")
+            return
+
+        # Find the trash folder ID
+        folders = self._folder_repo.get_by_account(self._current_account.id)
+        trash_folder = next((f for f in folders if f.name == trash_name), None)
+        if not trash_folder or trash_folder.id is None:
+            QMessageBox.information(self, "Empty Trash", "Trash folder not found in database.")
+            return
+
+        messages = self._msg_repo.query_messages(
+            folder_ids=[trash_folder.id], limit=100000
+        )
+        if not messages:
+            QMessageBox.information(self, "Empty Trash", "Trash is already empty.")
+            return
+
+        reply = QMessageBox.warning(
+            self, "Empty Trash",
+            f"Permanently delete {len(messages)} message(s) from {trash_name}?\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        from mailsweep.workers.delete_worker import DeleteWorker
+        worker = DeleteWorker(
+            account=self._current_account,
+            messages=messages,
+            folder_id_to_name=folder_map,
+            permanent=True,
+        )
+        self._run_worker(worker, f"Emptying trash ({len(messages)} messages)…", updates_cache=True)
 
     def _on_remove_label(self, messages: list[Message]) -> None:
         """Show label picker, then expunge selected labels (no Trash copy)."""
