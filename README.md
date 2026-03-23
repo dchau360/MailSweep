@@ -59,7 +59,7 @@ bulk attachment extraction, detach, backup, and delete operations.
 
 **Option A — Standalone executable (no Python required)**
 
-Download the latest release for your platform from the [releases page](https://github.com/jitrc/MailSweep/releases/latest):
+Download the latest release for your platform from the [releases page](https://github.com/dchau360/MailSweep/releases/latest):
 - **macOS:** `MailSweep-macos.dmg` — open the DMG and drag MailSweep to Applications
 - **Linux:** `MailSweep-linux.AppImage` — make executable and run: `chmod +x MailSweep-linux.AppImage && ./MailSweep-linux.AppImage`
 
@@ -82,7 +82,7 @@ uv run mailsweep-cli --host imap.gmail.com --username you@gmail.com
 
 **Option A — Standalone executable (no Python required)**
 
-Download `MailSweep-windows.exe` from the [latest release](https://github.com/jitrc/MailSweep/releases/latest) and double-click to run. Windows Defender SmartScreen may warn about an unrecognised publisher — click **More info → Run anyway**.
+Download `MailSweep-windows.exe` from the [latest release](https://github.com/dchau360/MailSweep/releases/latest) and double-click to run. Windows Defender SmartScreen may warn about an unrecognised publisher — click **More info → Run anyway**.
 
 **Option B — Run from source**
 
