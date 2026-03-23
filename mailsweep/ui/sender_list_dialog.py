@@ -36,6 +36,7 @@ class SenderListDialog(QDialog):
         self.setWindowTitle("All Senders")
         self.resize(700, 500)
         self._all_rows = rows
+        self._total_size = 0
 
         layout = QVBoxLayout(self)
 
@@ -108,7 +109,8 @@ class SenderListDialog(QDialog):
 
         self._table.setSortingEnabled(True)
         self._table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
-        self._update_status(len(rows))
+        total_size = sum(r.get("total_size_bytes", 0) for r in rows)
+        self._update_status(len(rows), total_size)
 
     def _apply_filter(self, text: str) -> None:
         text = text.strip().lower()
@@ -139,12 +141,20 @@ class SenderListDialog(QDialog):
         n = len(emails)
         total = self._table.rowCount()
         if n:
-            self._count_label.setText(f"{n} of {total:,} sender(s) selected")
+            sel_size = sum(
+                (self._table.item(i, 3).data(Qt.ItemDataRole.UserRole) or 0)
+                for i in range(total)
+                if self._table.item(i, 0) and self._table.item(i, 0).data(Qt.ItemDataRole.UserRole) in emails
+            )
+            self._count_label.setText(
+                f"{n} of {total:,} sender(s) selected — {human_size(sel_size)}"
+            )
         else:
-            self._update_status(total)
+            self._update_status(total, self._total_size)
 
-    def _update_status(self, total: int) -> None:
-        self._count_label.setText(f"{total:,} sender(s)")
+    def _update_status(self, total: int, total_size: int = 0) -> None:
+        self._total_size = total_size
+        self._count_label.setText(f"{total:,} sender(s) — {human_size(total_size)} total")
 
     def _on_context_menu(self, pos) -> None:
         emails = self._selected_emails()

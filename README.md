@@ -47,7 +47,7 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **Select-all checkbox** — checkbox in the message table header selects or deselects all visible messages; shows tri-state (partial) indicator when only some rows are checked
 - **Fast batch delete** — bulk delete sends messages to Trash in optimised batches with automatic rate-limit retry; significantly faster than deleting one message at a time
 - **Provider profiles** — Add Account dialog includes preset profiles for Gmail, Outlook, Yahoo, ProtonMail, and Fastmail that auto-fill host, port, SSL, and auth type
-- **Sender List** — browse all unique senders sorted by message count or size; multi-select senders and right-click to delete all emails or block and delete in one action
+- **Sender List** — browse all unique senders sorted by message count or size; status bar shows total size across all senders; multi-select and right-click to delete, block and delete, or backup and delete in one action
 - **Sender blocklist** — block individual addresses or entire domains; blocked messages are automatically moved to a dedicated `MailSweep-Blocked` IMAP folder for review rather than deleted; supports a local blocklist (stored in SQLite) and an optional community blocklist (synced from any raw `.txt` URL); both lists are managed from Actions → Manage Blocklist
 
 ## Installation
@@ -329,7 +329,7 @@ loaded on your local Ollama or LM Studio instance.
 
 **Actions → Sender List…**
 
-Shows all unique senders across your mailbox (or the selected folder) in a sortable, searchable table with message count and total size. Useful for quickly identifying who is flooding your inbox.
+Shows all unique senders across your mailbox (or the selected folder) in a sortable, searchable table with message count and total size. The status bar shows the total size across all displayed senders, and updates to show the selected count and size when rows are highlighted. Useful for quickly identifying who is flooding your inbox.
 
 - **Filter** — type to narrow down by name or email
 - **Sort** — click any column header to sort; defaults to message count descending
