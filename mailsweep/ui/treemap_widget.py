@@ -219,7 +219,7 @@ class TreemapWidget(QWidget):
     sender_clicked = pyqtSignal(str)           # from_addr
     receiver_clicked = pyqtSignal(str)         # to_addr
     message_clicked = pyqtSignal(int)          # message uid
-    view_mode_changed = pyqtSignal(int)        # VIEW_FOLDERS / VIEW_SENDERS / VIEW_MESSAGES / VIEW_RECEIVERS / VIEW_COUNT
+    view_mode_changed = pyqtSignal(int)        # VIEW_FOLDERS / VIEW_SENDERS / VIEW_MESSAGES / VIEW_RECEIVERS
     context_menu_requested = pyqtSignal(str, int, QPoint)  # key, view_mode, global_pos
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -239,7 +239,7 @@ class TreemapWidget(QWidget):
         self._mode_combo.addItem("Senders", VIEW_SENDERS)
         self._mode_combo.addItem("Receivers", VIEW_RECEIVERS)
         self._mode_combo.addItem("Messages", VIEW_MESSAGES)
-        self._mode_combo.addItem("Count", VIEW_COUNT)
+        # COUNT view removed — use Actions → Sender List instead
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         self._mode_combo.setFixedWidth(120)
         header.addWidget(self._mode_combo)
@@ -271,8 +271,6 @@ class TreemapWidget(QWidget):
                 self.message_clicked.emit(int(key))
             except ValueError:
                 pass
-        elif self._view_mode == VIEW_COUNT:
-            self.sender_clicked.emit(key)
 
     def _on_item_right_clicked(self, key: str, global_pos: QPoint) -> None:
         self.context_menu_requested.emit(key, self._view_mode, global_pos)

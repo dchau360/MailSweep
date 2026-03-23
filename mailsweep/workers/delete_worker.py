@@ -105,7 +105,7 @@ class DeleteWorker(QObject):
                                     client.copy(chunk, trash_folder)
                                     break
                                 except Exception as exc:
-                                    if "rate limit" in str(exc).lower() and attempt < _COPY_MAX_RETRIES - 1:
+                                    if "LIMIT" in str(exc).upper() and attempt < _COPY_MAX_RETRIES - 1:
                                         logger.warning("COPY rate limit hit, retrying in %.0fs…", _COPY_RETRY_DELAY)
                                         self.progress.emit(done, total, f"Rate limited — waiting {int(_COPY_RETRY_DELAY)}s…")
                                         time.sleep(_COPY_RETRY_DELAY)

@@ -37,7 +37,6 @@ from mailsweep.ui.folder_panel import UNLABELLED_ID, FolderPanel
 from mailsweep.ui.message_table import MessageTableView
 from mailsweep.ui.progress_panel import ProgressPanel
 from mailsweep.ui.treemap_widget import (
-    VIEW_COUNT,
     VIEW_FOLDERS,
     VIEW_MESSAGES,
     VIEW_RECEIVERS,
@@ -253,6 +252,7 @@ class MainWindow(QMainWindow):
         actions_menu.addAction("Find Duplicate Labels\u2026", self._on_find_duplicate_labels)
         actions_menu.addSeparator()
         actions_menu.addAction("Manage Blocklist\u2026", self._on_manage_blocklist)
+        actions_menu.addAction("Sender List\u2026", self._on_sender_list)
 
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction("About MailSweep", self._on_about)
@@ -550,40 +550,6 @@ class MainWindow(QMainWindow):
                 for m in messages if m.size_bytes > 0
             ]
 
-        elif mode == VIEW_COUNT:
-            if is_unlabelled:
-                messages = self._query_unlabelled(order_by="size_bytes DESC", limit=5000)
-                from collections import Counter
-                counts: Counter[str] = Counter()
-                sizes: dict[str, int] = {}
-                for m in messages:
-                    addr = m.from_addr or "(unknown)"
-                    counts[addr] += 1
-                    sizes[addr] = sizes.get(addr, 0) + m.size_bytes
-                items = [
-                    TreemapItem(
-                        key=addr,
-                        label=addr,
-                        sublabel=human_size(sizes[addr]),
-                        size_bytes=count,
-                        display_str=f"{count} msgs",
-                    )
-                    for addr, count in counts.most_common()
-                ]
-            else:
-                folder_ids = self._get_active_folder_ids()
-                rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids or None)
-                items = [
-                    TreemapItem(
-                        key=row["sender_email"],
-                        label=row["sender_email"],
-                        sublabel=human_size(row["total_size_bytes"]),
-                        size_bytes=row["message_count"],
-                        display_str=f"{row['message_count']} msgs",
-                    )
-                    for row in rows if row["message_count"] > 0
-                ]
-
         else:
             items = []
 
@@ -757,7 +723,7 @@ class MainWindow(QMainWindow):
     def _on_treemap_context_menu(self, key: str, view_mode: int, global_pos) -> None:
         """Show a full context menu for a treemap tile, operating on all messages in that group."""
         from mailsweep.ui.treemap_widget import (
-            VIEW_COUNT, VIEW_FOLDERS, VIEW_MESSAGES, VIEW_RECEIVERS, VIEW_SENDERS,
+            VIEW_FOLDERS, VIEW_MESSAGES, VIEW_RECEIVERS, VIEW_SENDERS,
         )
         if not self._current_account:
             return
@@ -765,7 +731,7 @@ class MainWindow(QMainWindow):
         folder_ids = self._get_active_folder_ids()
 
         # Resolve messages for the group
-        if view_mode in (VIEW_SENDERS, VIEW_COUNT):
+        if view_mode == VIEW_SENDERS:
             messages = self._msg_repo.query_messages(folder_ids=folder_ids or None, from_filter=key, limit=10000)
         elif view_mode == VIEW_RECEIVERS:
             messages = self._msg_repo.query_messages(folder_ids=folder_ids or None, to_filter=key, limit=10000)
@@ -805,6 +771,10 @@ class MainWindow(QMainWindow):
         if not messages:
             return
 
+        self._show_messages_context_menu(messages, global_pos)
+
+    def _show_messages_context_menu(self, messages: list, global_pos) -> None:
+        """Show the full operations context menu for a list of messages."""
         n = len(messages)
         menu = QMenu(self)
         extract_act    = menu.addAction(f"Extract Attachments ({n} msg(s))")
@@ -1167,6 +1137,48 @@ class MainWindow(QMainWindow):
     def _on_manage_blocklist(self) -> None:
         from mailsweep.ui.blocklist_dialog import BlocklistDialog
         BlocklistDialog(self._blocklist_repo, self).exec()
+
+    def _on_sender_list(self) -> None:
+        if not self._current_account:
+            return
+        from mailsweep.ui.sender_list_dialog import SenderListDialog
+        folder_ids = self._get_active_folder_ids() or None
+        rows = self._msg_repo.get_sender_summary(folder_ids=folder_ids)
+        dlg = SenderListDialog(rows, self)
+        dlg.delete_requested.connect(self._on_delete_all_from_sender_by_email)
+        dlg.block_delete_requested.connect(self._on_block_delete_sender)
+        dlg.backup_delete_requested.connect(self._on_backup_delete_sender)
+        dlg.exec()
+
+    def _on_delete_all_from_sender_by_email(self, emails: list[str]) -> None:
+        """Delete all messages from a list of email addresses (called from Sender List)."""
+        from mailsweep.models.message import Message
+        self._on_delete_all_from_sender([Message(from_addr=e) for e in emails])
+
+    def _on_block_delete_sender(self, emails: list[str]) -> None:
+        """Add emails to local blocklist and delete all messages from them."""
+        for email in emails:
+            self._blocklist_repo.add(email)
+        self._on_delete_all_from_sender_by_email(emails)
+
+    def _on_backup_delete_sender(self, emails: list[str]) -> None:
+        """Backup then delete all messages from the given senders."""
+        from mailsweep.models.message import Message
+        folder_ids = self._get_active_folder_ids()
+        all_messages = []
+        for email in emails:
+            all_messages.extend(
+                self._msg_repo.query_messages(folder_ids=folder_ids or None, from_filter=email, limit=10000)
+            )
+        seen: set[tuple[int, int]] = set()
+        unique = []
+        for m in all_messages:
+            key = (m.uid, m.folder_id)
+            if key not in seen:
+                seen.add(key)
+                unique.append(m)
+        if unique:
+            self._on_backup_messages(unique)
 
     def _on_scan_error(self, msg: str) -> None:
         self._progress_panel.set_error(msg)
