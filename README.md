@@ -57,6 +57,14 @@ bulk attachment extraction, detach, backup, and delete operations.
 
 ### macOS / Linux
 
+**Option A — Standalone executable (no Python required)**
+
+Download the latest release for your platform from the [releases page](https://github.com/jitrc/MailSweep/releases/latest):
+- **macOS:** `MailSweep-macos.dmg` — open the DMG and drag MailSweep to Applications
+- **Linux:** `MailSweep-linux.AppImage` — make executable and run: `chmod +x MailSweep-linux.AppImage && ./MailSweep-linux.AppImage`
+
+**Option B — Run from source**
+
 ```bash
 # Clone and install
 git clone https://github.com/jitrc/MailSweep.git
