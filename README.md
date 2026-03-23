@@ -49,7 +49,7 @@ bulk attachment extraction, detach, backup, and delete operations.
 - **Provider profiles** — Add Account dialog includes preset profiles for Gmail, Outlook, Yahoo, ProtonMail, and Fastmail that auto-fill host, port, SSL, and auth type
 - **Senders sidebar** — inline sender list in the left panel; click a sender to filter the message table to only their messages; right-click for the full sender action menu
 - **Sender List** — browse all unique senders sorted by message count or size; status bar shows total size across all senders; multi-select and right-click to delete, block and delete, backup and delete, permanent delete, or block and permanent delete in one action
-- **Permanent Delete** — right-click any message selection to permanently expunge without moving to Trash first; also available per-sender from the Sender List and Senders sidebar
+- **Permanent Delete** — right-click any message selection to permanently expunge without moving to Trash first; also available per-sender from the Sender List, Senders sidebar, and the message table context menu (includes Permanent Delete All From Sender and Block && Permanent Delete All From Sender)
 - **Empty Trash** — Actions → Empty Trash… permanently expunges all messages in the Trash folder in one step
 - **Sender blocklist** — block individual addresses or entire domains; blocked messages are automatically moved to a dedicated `MailSweep-Blocked` IMAP folder for review rather than deleted; supports a local blocklist (stored in SQLite) and an optional community blocklist (synced from any raw `.txt` URL); both lists are managed from Actions → Manage Blocklist
 

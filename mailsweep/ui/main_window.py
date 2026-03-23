@@ -201,6 +201,9 @@ class MainWindow(QMainWindow):
         self._msg_table.backup_requested.connect(self._on_backup_messages_only)
         self._msg_table.backup_delete_requested.connect(self._on_backup_messages)
         self._msg_table.delete_requested.connect(self._on_delete_messages)
+        self._msg_table.perm_delete_requested.connect(self._on_permanent_delete_messages)
+        self._msg_table.perm_delete_sender_requested.connect(self._on_perm_delete_all_from_sender_msgs)
+        self._msg_table.block_perm_delete_sender_requested.connect(self._on_block_perm_delete_sender_msgs)
         self._msg_table.move_requested.connect(self._on_move_messages)
         self._msg_table.remove_label_requested.connect(self._on_remove_label)
         self._msg_table.unsubscribe_requested.connect(self._on_unsubscribe_messages)
@@ -849,7 +852,10 @@ class MainWindow(QMainWindow):
         unsub_act      = menu.addAction(f"Unsubscribe && Block ({n} msg(s))")
         unsub_del_act  = menu.addAction(f"Unsubscribe, Block && Delete ({n} msg(s))")
         menu.addSeparator()
-        block_act      = menu.addAction(f"Delete All From Sender ({len({m.from_addr for m in messages})} address(es))")
+        n_addrs = len({m.from_addr for m in messages})
+        block_act            = menu.addAction(f"Delete All From Sender ({n_addrs} address(es))")
+        perm_sender_act      = menu.addAction(f"Permanent Delete All From Sender ({n_addrs} address(es))")
+        blk_perm_sender_act  = menu.addAction(f"Block && Permanent Delete All From Sender ({n_addrs} address(es))")
 
         extract_act.triggered.connect(lambda: self._on_extract_messages(messages))
         detach_act.triggered.connect(lambda: self._on_detach_messages(messages))
@@ -862,6 +868,9 @@ class MainWindow(QMainWindow):
         unsub_act.triggered.connect(lambda: self._on_unsubscribe_messages(messages))
         unsub_del_act.triggered.connect(lambda: self._on_unsubscribe_delete_messages(messages))
         block_act.triggered.connect(lambda: self._on_delete_all_from_sender(messages))
+        emails = list({m.from_addr for m in messages})
+        perm_sender_act.triggered.connect(lambda: self._on_perm_delete_all_from_sender(emails))
+        blk_perm_sender_act.triggered.connect(lambda: self._on_block_perm_delete_sender(emails))
 
         menu.exec(global_pos)
 
@@ -1300,6 +1309,16 @@ class MainWindow(QMainWindow):
         for email in emails:
             self._blocklist_repo.add(email)
         self._on_perm_delete_all_from_sender(emails)
+
+    def _on_perm_delete_all_from_sender_msgs(self, messages: list[Message]) -> None:
+        """Adapter: extract unique email addresses from messages and permanently delete."""
+        emails = list({m.from_addr for m in messages if m.from_addr})
+        self._on_perm_delete_all_from_sender(emails)
+
+    def _on_block_perm_delete_sender_msgs(self, messages: list[Message]) -> None:
+        """Adapter: extract unique email addresses from messages, block, then permanently delete."""
+        emails = list({m.from_addr for m in messages if m.from_addr})
+        self._on_block_perm_delete_sender(emails)
 
     def _on_scan_error(self, msg: str) -> None:
         self._progress_panel.set_error(msg)
